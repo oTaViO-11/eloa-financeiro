@@ -1,3 +1,4 @@
+import { normalizeCardBrand, type CardBrand } from '@/lib/card-brand';
 import { getDatabase } from '@/lib/db';
 import { normalizeText } from '@/lib/money';
 
@@ -23,6 +24,7 @@ export type Card = {
   userId: string;
   name: string;
   normalizedName: string;
+  brand: CardBrand;
   limitCents: number;
   closingDay: number;
   dueDay: number;
@@ -88,6 +90,7 @@ function cardFromRow(row: Row): Card {
     userId: String(row.user_id),
     name: String(row.name),
     normalizedName: String(row.normalized_name),
+    brand: normalizeCardBrand(row.brand),
     limitCents,
     closingDay: asNumber(row.closing_day),
     dueDay: asNumber(row.due_day),
@@ -231,6 +234,21 @@ export async function getCardByName(userId: string, cardName: string): Promise<C
   return row ? cardFromRow(row) : null;
 }
 
+export async function getCardById(userId: string, cardId: string): Promise<Card | null> {
+  const db = getDatabase();
+  const row = (await db
+    .prepare(
+      `SELECT c.*, COALESCE(SUM(i.amount_cents - i.paid_cents), 0) AS outstanding_cents
+       FROM cards c
+       LEFT JOIN installments i ON i.card_id = c.id
+       WHERE c.user_id = ? AND c.id = ? AND c.active = 1
+       GROUP BY c.id`,
+    )
+    .bind(userId, cardId)
+    .first()) as Row | null;
+  return row ? cardFromRow(row) : null;
+}
+
 export async function listCards(userId: string): Promise<Card[]> {
   const db = getDatabase();
   const result = await db
@@ -249,19 +267,27 @@ export async function listCards(userId: string): Promise<Card[]> {
 
 export async function upsertCard(
   userId: string,
-  input: { name: string; limitCents: number; closingDay: number; dueDay: number },
+  input: {
+    name: string;
+    brand?: CardBrand;
+    limitCents: number;
+    closingDay: number;
+    dueDay: number;
+  },
 ): Promise<Card> {
   const db = getDatabase();
   const timestamp = now();
   const normalizedName = normalizeText(input.name);
+  const brand = input.brand ?? 'unknown';
   await db
     .prepare(
       `INSERT INTO cards (
-          id, user_id, name, normalized_name, limit_cents, closing_day, due_day,
+          id, user_id, name, normalized_name, brand, limit_cents, closing_day, due_day,
           active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
         ON CONFLICT(user_id, normalized_name) DO UPDATE SET
           name = excluded.name,
+          brand = CASE WHEN excluded.brand = 'unknown' THEN brand ELSE excluded.brand END,
           limit_cents = excluded.limit_cents,
           closing_day = excluded.closing_day,
           due_day = excluded.due_day,
@@ -273,6 +299,7 @@ export async function upsertCard(
       userId,
       input.name.slice(0, 80),
       normalizedName,
+      brand,
       input.limitCents,
       input.closingDay,
       input.dueDay,
@@ -283,6 +310,20 @@ export async function upsertCard(
   const card = await getCardByName(userId, input.name);
   if (!card) throw new Error('Nao foi possivel localizar o cartao salvo.');
   return card;
+}
+
+export async function updateCardBrand(
+  userId: string,
+  cardId: string,
+  brand: CardBrand,
+): Promise<Card | null> {
+  if (brand === 'unknown') return getCardById(userId, cardId);
+  const db = getDatabase();
+  await db
+    .prepare('UPDATE cards SET brand = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+    .bind(brand, now(), cardId, userId)
+    .run();
+  return getCardById(userId, cardId);
 }
 
 export async function createPurchase(

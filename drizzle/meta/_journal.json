@@ -8,6 +8,13 @@
       "when": 1788278106494,
       "tag": "0000_narrow_dark_beast",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788292228913,
+      "tag": "0001_wandering_serpent_society",
+      "breakpoints": true
     }
   ]
 }

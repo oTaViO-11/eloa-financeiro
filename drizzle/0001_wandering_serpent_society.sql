@@ -1,0 +1,1 @@
+ALTER TABLE `cards` ADD `brand` text DEFAULT 'unknown' NOT NULL;

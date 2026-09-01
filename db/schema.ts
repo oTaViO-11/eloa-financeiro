@@ -38,6 +38,7 @@ export const cards = sqliteTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     normalizedName: text('normalized_name').notNull(),
+    brand: text('brand').notNull().default('unknown'),
     limitCents: integer('limit_cents').notNull(),
     closingDay: integer('closing_day').notNull(),
     dueDay: integer('due_day').notNull(),

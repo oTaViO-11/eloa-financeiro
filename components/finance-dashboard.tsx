@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { cardBrandLabel, normalizeCardBrand } from '@/lib/card-brand';
 import { purchaseCategoryLabel } from '@/lib/categories';
 
 type Profile = {
@@ -37,6 +38,7 @@ type Profile = {
 type CardItem = {
   id: string;
   name: string;
+  brand: string;
   limitCents: number;
   closingDay: number;
   dueDay: number;
@@ -138,6 +140,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [savingPhone, setSavingPhone] = useState(false);
+  const [resolvingBrandCardId, setResolvingBrandCardId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -286,6 +289,35 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
       );
     } finally {
       setSavingPhone(false);
+    }
+  }
+
+  async function identifyCardBrand(cardId: string) {
+    if (resolvingBrandCardId) return;
+    setResolvingBrandCardId(cardId);
+    setNotice(null);
+    try {
+      const result = await readJson<{ found: boolean; label: string }>(
+        await fetch('/api/cards/brand', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cardId }),
+        }),
+      );
+      await loadDashboard();
+      setNotice(
+        result.found
+          ? `Bandeira identificada: ${result.label}.`
+          : 'Não encontrei uma bandeira única com segurança. Você pode informar a bandeira ao cadastrar o cartão novamente.',
+      );
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível identificar a bandeira agora.',
+      );
+    } finally {
+      setResolvingBrandCardId(null);
     }
   }
 
@@ -478,6 +510,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
               )}
               {data?.cards.map((card) => {
                 const used = card.outstandingCents ?? 0;
+                const brand = normalizeCardBrand(card.brand);
                 const available =
                   card.availableCents ?? Math.max(0, card.limitCents - used);
                 const percentage = card.limitCents
@@ -489,8 +522,13 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                     className="rounded-2xl border border-[#e1e7df] bg-[#fbfcf9] p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <strong className="text-sm">{card.name}</strong>
-                      <span className="rounded-full bg-[#e6f0eb] px-2 py-0.5 text-[11px] font-semibold text-[#28634f]">
+                      <div className="min-w-0">
+                        <strong className="block text-sm">{card.name}</strong>
+                        <span className="mt-1 inline-flex rounded-full bg-[#edf1ee] px-2 py-0.5 text-[11px] font-semibold text-[#47645c]">
+                          Bandeira: {cardBrandLabel(brand)}
+                        </span>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-[#e6f0eb] px-2 py-0.5 text-[11px] font-semibold text-[#28634f]">
                         vence dia {card.dueDay}
                       </span>
                     </div>
@@ -506,6 +544,18 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                         style={{ width: `${percentage}%` }}
                       />
                     </div>
+                    {brand === 'unknown' && (
+                      <button
+                        type="button"
+                        onClick={() => void identifyCardBrand(card.id)}
+                        disabled={resolvingBrandCardId === card.id}
+                        className="mt-3 text-xs font-semibold text-[#174f40] underline-offset-2 hover:underline disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {resolvingBrandCardId === card.id
+                          ? 'Identificando bandeira…'
+                          : 'Identificar bandeira'}
+                      </button>
+                    )}
                   </div>
                 );
               })}

@@ -1,3 +1,10 @@
+import {
+  cardBrandLabel,
+  cardBrands,
+  normalizeCardBrand,
+  type CardBrand,
+} from '@/lib/card-brand';
+import { resolveCardBrand } from '@/lib/card-brand-resolver';
 import { getRuntimeSecret } from '@/lib/db';
 import {
   classifyPurchaseCategory,
@@ -55,6 +62,7 @@ type Command = {
   savingsGoal?: string;
   monthlyBudget?: string;
   cardLimit?: string;
+  cardBrand?: CardBrand;
   closingDay?: number;
   dueDay?: number;
 };
@@ -79,6 +87,7 @@ const HELP_TEXT = [
   '• Comprei café por R$ 12,50 na Padaria Central no Pix hoje',
   '• Minha renda é R$ 5.000 e meu orçamento mensal é R$ 1.500',
   '• Cartão Nubank, limite R$ 3.000, fecha dia 5 e vence dia 12',
+  '• Ao cadastrar um cartão, eu identifico a bandeira com segurança.',
   '• Posso comprar um notebook de R$ 2.500 no Nubank em 10x?',
   '• Eu identifico categorias como alimentação, saúde, roupas, transporte e outras.',
   '',
@@ -452,6 +461,7 @@ function fallbackExtract(text: string, today: string): Command {
     return {
       intent: 'add_card',
       cardName: name,
+      cardBrand: normalizeCardBrand(corrected),
       cardLimit: amountAfterKeyword(corrected, 'limite'),
       closingDay: dayFromText(corrected, 'closing'),
       dueDay: dayFromText(corrected, 'due'),
@@ -566,6 +576,7 @@ function commandFromUnknown(value: unknown): Command | null {
         ? installments
         : undefined,
     cardName: cleanText(item.cardName, 80),
+    cardBrand: normalizeCardBrand(item.cardBrand),
     purchaseDate:
       typeof item.purchaseDate === 'string' &&
       /^\d{4}-\d{2}-\d{2}$/.test(item.purchaseDate)
@@ -611,6 +622,9 @@ function mergeExtraction(fallback: Command, extracted: Command): Command {
   if (fallback.amount) merged.amount = fallback.amount;
   if (fallback.paymentMethod) merged.paymentMethod = fallback.paymentMethod;
   if (fallback.cardName) merged.cardName = fallback.cardName;
+  if (fallback.cardBrand && fallback.cardBrand !== 'unknown') {
+    merged.cardBrand = fallback.cardBrand;
+  }
   if (fallback.category && fallback.category !== 'geral') {
     merged.category = fallback.category;
   }
@@ -668,6 +682,7 @@ async function extractWithAi(
       'paymentMethod',
       'installments',
       'cardName',
+      'cardBrand',
       'purchaseDate',
       'monthlyIncome',
       'fixedExpenses',
@@ -690,6 +705,7 @@ async function extractWithAi(
       },
       installments: { type: ['integer', 'null'] },
       cardName: { type: ['string', 'null'] },
+      cardBrand: { type: ['string', 'null'], enum: [...cardBrands, null] },
       purchaseDate: { type: ['string', 'null'] },
       monthlyIncome: { type: ['string', 'null'] },
       fixedExpenses: { type: ['string', 'null'] },
@@ -719,6 +735,7 @@ async function extractWithAi(
           'Entenda erros comuns de digitação e frases em ordem diferente, mas nunca invente um valor, cartão ou local ausente. ' +
           'Quando a pessoa responder apenas a forma de pagamento, preserve o contexto do rascunho. ' +
           '“Cartão de crédito Mercado Pago” significa paymentMethod credit e cardName Mercado Pago. ' +
+          'Se a pessoa informar uma bandeira de cartão, use cardBrand; não invente uma bandeira ausente. ' +
           'Classifique compras em alimentação, saúde, roupas, transporte, moradia, educação, lazer, cuidados pessoais, pets ou geral. ' +
           'Valores devem manter a forma dita pela pessoa. Retorne somente o objeto solicitado.',
         input: text.slice(0, 2000),
@@ -838,6 +855,7 @@ function preview(command: Command): string {
     return [
       '💳 Prévia do cartão:',
       `• Nome: ${command.cardName}`,
+      `• Bandeira: ${cardBrandLabel(command.cardBrand)}`,
       `• Limite: ${formatBrl(parseCents(command.cardLimit ?? ''))}`,
       `• Fecha dia ${command.closingDay} e vence dia ${command.dueDay}`,
       '',
@@ -888,13 +906,16 @@ async function commit(
     return '✅ Perfil financeiro atualizado.';
   }
   if (command.intent === 'add_card') {
-    await upsertCard(userId, {
+    const card = await upsertCard(userId, {
       name: command.cardName ?? '',
+      brand: command.cardBrand,
       limitCents: parseCents(command.cardLimit ?? ''),
       closingDay: Number(command.closingDay),
       dueDay: Number(command.dueDay),
     });
-    return '✅ Cartão configurado.';
+    return card.brand === 'unknown'
+      ? '✅ Cartão configurado. Não consegui identificar a bandeira automaticamente ainda.'
+      : `✅ Cartão configurado com bandeira ${cardBrandLabel(card.brand)}.`;
   }
   if (command.intent === 'record_purchase') {
     const totalCents = parseCents(command.amount ?? '');
@@ -1181,6 +1202,15 @@ export async function processFinanceMessage(
       pending as unknown as Record<string, unknown>,
     );
     return finish(input, pending.preparedResponse);
+  }
+  if (
+    command.intent === 'add_card' &&
+    command.cardName &&
+    (!command.cardBrand || command.cardBrand === 'unknown')
+  ) {
+    command.cardBrand = (
+      await resolveCardBrand(command.cardName, input.user.id)
+    ).brand;
   }
   if (command.intent === 'analyze_credit') {
     try {
