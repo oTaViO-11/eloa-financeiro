@@ -1,6 +1,6 @@
 'use client';
 
-import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -95,6 +95,8 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   const [sending, setSending] = useState(false);
   const [savingPhone, setSavingPhone] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const shouldStickToBottomRef = useRef(true);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -114,6 +116,25 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
     void loadDashboard();
   }, [loadDashboard]);
 
+  const scrollMessagesToBottom = useCallback(() => {
+    const element = messageListRef.current;
+    if (!element || !shouldStickToBottomRef.current) return;
+    element.scrollTop = element.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    if (!shouldStickToBottomRef.current) return;
+    const frame = window.requestAnimationFrame(scrollMessagesToBottom);
+    return () => window.cancelAnimationFrame(frame);
+  }, [data?.messages, sending, scrollMessagesToBottom]);
+
+  function handleMessageScroll() {
+    const element = messageListRef.current;
+    if (!element) return;
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    shouldStickToBottomRef.current = distanceFromBottom <= 64;
+  }
+
   const budgetPercent = useMemo(() => {
     if (!data?.effectiveBudgetCents) return 0;
     return Math.min(100, Math.round((data.spendingCents / data.effectiveBudgetCents) * 100));
@@ -125,6 +146,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
     if (!content || sending) return;
     const messageId = safeId();
     const createdAt = new Date().toISOString();
+    shouldStickToBottomRef.current = true;
     setMessage('');
     setSending(true);
     setNotice(null);
@@ -176,6 +198,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   }
 
   const empty = !loading && data && data.messages.length === 0;
+  const initialLoading = loading && !data;
 
   return (
     <main className="min-h-screen bg-[#f5f6f1] text-[#143b32]">
@@ -219,8 +242,8 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
               <Bot className="text-[#174f40]" />
             </CardHeader>
             <CardContent className="p-0">
-              <div className="max-h-[430px] min-h-[280px] space-y-3 overflow-y-auto bg-[#fafcf9] p-5" aria-live="polite">
-                {loading && <div className="flex h-52 items-center justify-center gap-2 text-sm text-[#668078]"><LoaderCircle className="animate-spin" size={17} /> Abrindo seu painel…</div>}
+              <div ref={messageListRef} onScroll={handleMessageScroll} className="max-h-[430px] min-h-[280px] space-y-3 overflow-y-auto overscroll-contain bg-[#fafcf9] p-5 [overflow-anchor:none]" aria-live="polite">
+                {initialLoading && <div className="flex h-52 items-center justify-center gap-2 text-sm text-[#668078]"><LoaderCircle className="animate-spin" size={17} /> Abrindo seu painel…</div>}
                 {empty && <WelcomeMessage />}
                 {data?.messages.map((item) => <Bubble key={item.id} message={item} />)}
                 {sending && <div className="w-fit rounded-2xl rounded-bl-sm bg-white px-4 py-3 text-sm text-[#668078] shadow-sm"><LoaderCircle className="mr-2 inline animate-spin" size={14} /> Pensando…</div>}

@@ -56,7 +56,6 @@ type Command = {
 
 type PendingAction = {
   command: Command;
-  confirmationCode: string;
   originMessageId: string;
   preparedResponse: string;
 };
@@ -77,7 +76,7 @@ const HELP_TEXT = [
   '• Cartão Nubank, limite R$ 3.000, fecha dia 5 e vence dia 12',
   '• Posso comprar um notebook de R$ 2.500 no Nubank em 10x?',
   '',
-  'Antes de gravar algo, eu sempre envio uma prévia para você confirmar.',
+  'Antes de gravar algo, eu envio uma prévia para revisão. Responda SIM para salvar, CORRIGIR para ajustar ou CANCELAR para desistir.',
 ].join('\n');
 
 const SENSITIVE_WARNING =
@@ -337,6 +336,14 @@ function fallbackExtract(text: string, today: string): Command {
       purchaseDate: date,
     };
   }
+  const paymentMethod = paymentMethodFromText(normalized);
+  if (paymentMethod) {
+    return {
+      intent: 'unknown',
+      paymentMethod,
+      cardName: paymentMethod === 'credit' ? cardName : undefined,
+    };
+  }
   return { intent: 'unknown', amount };
 }
 
@@ -470,11 +477,6 @@ async function extractWithAi(text: string, userId: string, fallback: Command): P
   }
 }
 
-function randomConfirmationCode(): string {
-  const values = crypto.getRandomValues(new Uint8Array(3));
-  return Array.from(values, (value) => value.toString(16).padStart(2, '0')).join('');
-}
-
 function missingFields(command: Command): string[] {
   if (command.intent === 'configure_profile') {
     return command.monthlyIncome || command.fixedExpenses || command.savingsGoal || command.monthlyBudget
@@ -537,7 +539,12 @@ function labelPayment(method?: PaymentMethod): string {
   return method ? labels[method] : 'não informado';
 }
 
-function preview(command: Command, code: string): string {
+const REVIEW_INSTRUCTIONS = [
+  'Revise os dados acima.',
+  'Para salvar, responda SIM. Para ajustar, responda CORRIGIR. Para desistir, responda CANCELAR.',
+];
+
+function preview(command: Command): string {
   if (command.intent === 'record_purchase') {
     const lines = [
       '🧾 Prévia da compra:',
@@ -550,7 +557,7 @@ function preview(command: Command, code: string): string {
     if (command.paymentMethod === 'credit') {
       lines.push(`• Cartão: ${command.cardName}`, `• Parcelas: ${command.installments}x`);
     }
-    return [...lines, '', `Para salvar, responda exatamente: CONFIRMAR ${code.toUpperCase()}`, 'Para desistir, responda CANCELAR.'].join('\n');
+    return [...lines, '', ...REVIEW_INSTRUCTIONS].join('\n');
   }
   if (command.intent === 'add_card') {
     return [
@@ -559,8 +566,7 @@ function preview(command: Command, code: string): string {
       `• Limite: ${formatBrl(parseCents(command.cardLimit ?? ''))}`,
       `• Fecha dia ${command.closingDay} e vence dia ${command.dueDay}`,
       '',
-      `Para salvar, responda exatamente: CONFIRMAR ${code.toUpperCase()}`,
-      'Para desistir, responda CANCELAR.',
+      ...REVIEW_INSTRUCTIONS,
     ].join('\n');
   }
   const values = [
@@ -573,9 +579,12 @@ function preview(command: Command, code: string): string {
     '⚙️ Prévia da configuração:',
     ...values,
     '',
-    `Para salvar, responda exatamente: CONFIRMAR ${code.toUpperCase()}`,
-    'Para desistir, responda CANCELAR.',
+    ...REVIEW_INSTRUCTIONS,
   ].join('\n');
+}
+
+function isPositiveConfirmation(value: string): boolean {
+  return /^(?:s|sim|confirmar|confirmo|pode(?:\s+(?:salvar|registrar|confirmar))?|salvar|registre|registrar|ok(?:ay)?|certo|isso|ta)(?:\b|$)/.test(value);
 }
 
 async function commit(
@@ -754,8 +763,7 @@ export async function processFinanceMessage(input: MessageInput): Promise<string
       await saveSession(input.user.id, 'collecting_details', pending as unknown as Record<string, unknown>);
       return finish(input, 'Certo. Envie apenas o dado corrigido, por exemplo: valor R$ 25,90.');
     }
-    const confirmation = normalized.match(/^confirmar\s+([0-9a-f]{6})$/i);
-    if (confirmation && confirmation[1].toLowerCase() === pending.confirmationCode.toLowerCase()) {
+    if (isPositiveConfirmation(normalized)) {
       try {
         const reply = await commit(input.user.id, pending, input.source);
         await clearSession(input.user.id);
@@ -764,7 +772,7 @@ export async function processFinanceMessage(input: MessageInput): Promise<string
         return finish(input, `Não consegui salvar: ${error instanceof Error ? error.message : 'tente novamente'}.`);
       }
     }
-    return finish(input, `Há um rascunho pendente. Para salvar, responda CONFIRMAR ${pending.confirmationCode.toUpperCase()}.`);
+    return finish(input, 'Há uma revisão pendente. Responda SIM para salvar, CORRIGIR para ajustar algum dado ou CANCELAR para desistir.');
   }
 
   const today = referenceDate();
@@ -787,10 +795,8 @@ export async function processFinanceMessage(input: MessageInput): Promise<string
   }
   const missing = missingFields(command);
   if (missing.length) {
-    const code = randomConfirmationCode();
     const pending: PendingAction = {
       command,
-      confirmationCode: code,
       originMessageId: input.messageId,
       preparedResponse: questionFor(missing[0]),
     };
@@ -805,12 +811,10 @@ export async function processFinanceMessage(input: MessageInput): Promise<string
     }
   }
   try {
-    const code = randomConfirmationCode();
     const pending: PendingAction = {
       command,
-      confirmationCode: code,
       originMessageId: input.messageId,
-      preparedResponse: preview(command, code),
+      preparedResponse: preview(command),
     };
     await saveSession(input.user.id, 'awaiting_confirmation', pending as unknown as Record<string, unknown>);
     return finish(input, pending.preparedResponse);
