@@ -21,10 +21,12 @@ import {
   getCardByName,
   getProfile,
   getSession,
+  listCards,
   saveAnalysis,
   saveInteraction,
   saveSession,
   spendingForPeriod,
+  updateCard,
   upsertCard,
   updateProfile,
   type AuthenticatedUser,
@@ -40,6 +42,9 @@ type Intent =
   | 'record_card_payment'
   | 'monthly_summary'
   | 'list_purchases'
+  | 'my_data'
+  | 'update_data'
+  | 'update_card'
   | 'confirm'
   | 'cancel'
   | 'unknown';
@@ -88,6 +93,8 @@ const HELP_TEXT = [
   '• Minha renda é R$ 5.000 e meu orçamento mensal é R$ 1.500',
   '• Cartão Nubank, limite R$ 3.000, fecha dia 5 e vence dia 12',
   '• Ao cadastrar um cartão, eu identifico a bandeira com segurança.',
+  '• Digite MEUS DADOS para ver cartões, limites, gastos e bandeiras.',
+  '• Digite ATUALIZAR DADOS ou “corrigir bandeira do cartão Mercado Pago para Visa”.',
   '• Posso comprar um notebook de R$ 2.500 no Nubank em 10x?',
   '• Eu identifico categorias como alimentação, saúde, roupas, transporte e outras.',
   '',
@@ -107,6 +114,9 @@ const intents: Intent[] = [
   'record_card_payment',
   'monthly_summary',
   'list_purchases',
+  'my_data',
+  'update_data',
+  'update_card',
   'confirm',
   'cancel',
   'unknown',
@@ -303,6 +313,10 @@ function cleanCardName(value: unknown): string | undefined {
       '',
     )
     .replace(/^(?:no|na|e)\s+/iu, '')
+    .replace(
+      /\s+(?:visa|mastercard|master\s*card|elo|hipercard|american\s+express|amex|diners(?:\s+club)?|discover|jcb|aura|cabal|sorocred)$/iu,
+      '',
+    )
     .trim();
   if (
     !cardName ||
@@ -337,6 +351,13 @@ function cardNameFromText(text: string): string | undefined {
     if (cardName) return cardName;
   }
   return undefined;
+}
+
+function cardNameFromCorrectionText(text: string): string | undefined {
+  const match = text.match(
+    /(?:do|da|no|na)\s+cart[aã]o\s+(.+?)(?=\s+(?:para|é|eh|=|limite|fecha|vence|vencimento|fechamento)\b|[,.!?]|$)/iu,
+  );
+  return cleanCardName(match?.[1]) ?? cardNameFromText(text);
 }
 
 function cleanPurchaseDescription(value: unknown): string | undefined {
@@ -428,6 +449,10 @@ function fallbackExtract(text: string, today: string): Command {
     return { intent: 'help' };
   if (/^(resumo|meu resumo|como estou)\b/.test(normalized))
     return { intent: 'monthly_summary' };
+  if (/^(?:meus?\s+dados|ver\s+(?:meus?\s+)?dados|dados\s+(?:salvos|cadastrados))\b/.test(normalized))
+    return { intent: 'my_data' };
+  if (/^(?:atualizar|editar|corrigir)\s+(?:meus?\s+)?dados\b/.test(normalized))
+    return { intent: 'update_data' };
   if (/\b(ultimas compras|minhas compras|listar compras)\b/.test(normalized))
     return { intent: 'list_purchases' };
   if (/^(confirmar|confirmo)\b/.test(normalized)) return { intent: 'confirm' };
@@ -448,15 +473,28 @@ function fallbackExtract(text: string, today: string): Command {
     };
   }
 
+  const isCardCorrection =
+    /\b(?:corrigir|corrige|atualizar|atualize|alterar|mudar|editar)\b/.test(normalized) &&
+    /\b(?:cartao|cartão|bandeira|limite|fecha|fechamento|vence|vencimento)\b/.test(normalized);
+  if (isCardCorrection) {
+    return {
+      intent: 'update_card',
+      cardName: cardNameFromCorrectionText(corrected),
+      cardBrand: normalizeCardBrand(corrected),
+      cardLimit: amountAfterKeyword(corrected, 'limite'),
+      closingDay: dayFromText(corrected, 'closing'),
+      dueDay: dayFromText(corrected, 'due'),
+    };
+  }
+
   if (
     /\b(cartao|cartão)\b/.test(normalized) &&
     /\b(limite|fecha|vence)\b/.test(normalized)
   ) {
-    const name = cleanText(
+    const name = cleanCardName(
       corrected.match(
         /cart[aã]o\s+([^,]+?)(?=,|\s+limite|\s+fecha|\s+vence|$)/i,
       )?.[1],
-      80,
     );
     return {
       intent: 'add_card',
@@ -613,6 +651,7 @@ function isNewFinancialAction(intent: Intent): boolean {
     'record_purchase',
     'analyze_credit',
     'record_card_payment',
+    'update_card',
   ].includes(intent);
 }
 
@@ -735,6 +774,8 @@ async function extractWithAi(
           'Entenda erros comuns de digitação e frases em ordem diferente, mas nunca invente um valor, cartão ou local ausente. ' +
           'Quando a pessoa responder apenas a forma de pagamento, preserve o contexto do rascunho. ' +
           '“Cartão de crédito Mercado Pago” significa paymentMethod credit e cardName Mercado Pago. ' +
+          'Os comandos “meus dados” e “atualizar dados” usam os intents my_data e update_data. ' +
+          'Para “corrigir bandeira do cartão Mercado Pago para Visa”, use update_card, cardName Mercado Pago e cardBrand visa. ' +
           'Se a pessoa informar uma bandeira de cartão, use cardBrand; não invente uma bandeira ausente. ' +
           'Classifique compras em alimentação, saúde, roupas, transporte, moradia, educação, lazer, cuidados pessoais, pets ou geral. ' +
           'Valores devem manter a forma dita pela pessoa. Retorne somente o objeto solicitado.',
@@ -776,6 +817,17 @@ function missingFields(command: Command): string[] {
       !command.dueDay && 'dia de vencimento',
     ].filter(Boolean) as string[];
   }
+  if (command.intent === 'update_card') {
+    const hasChange =
+      (command.cardBrand && command.cardBrand !== 'unknown') ||
+      command.cardLimit ||
+      command.closingDay ||
+      command.dueDay;
+    return [
+      !command.cardName && 'nome do cartão',
+      !hasChange && 'dado a corrigir',
+    ].filter(Boolean) as string[];
+  }
   if (command.intent === 'record_purchase') {
     const fields = [
       !command.amount && 'valor',
@@ -813,6 +865,7 @@ function questionFor(field: string): string {
     'dia de fechamento': 'Em que dia a fatura fecha?',
     'dia de vencimento': 'Em que dia a fatura vence?',
     'renda ou orçamento mensal': 'Qual é sua renda mensal ou seu orçamento?',
+    'dado a corrigir': 'O que deseja corrigir: bandeira, limite, dia de fechamento ou vencimento?',
   };
   return questions[field] ?? `Informe ${field}.`;
 }
@@ -858,6 +911,24 @@ function preview(command: Command): string {
       `• Bandeira: ${cardBrandLabel(command.cardBrand)}`,
       `• Limite: ${formatBrl(parseCents(command.cardLimit ?? ''))}`,
       `• Fecha dia ${command.closingDay} e vence dia ${command.dueDay}`,
+      '',
+      ...REVIEW_INSTRUCTIONS,
+    ].join('\n');
+  }
+  if (command.intent === 'update_card') {
+    const changes = [
+      command.cardBrand && command.cardBrand !== 'unknown'
+        ? `• Bandeira: ${cardBrandLabel(command.cardBrand)}`
+        : null,
+      command.cardLimit
+        ? `• Limite: ${formatBrl(parseCents(command.cardLimit))}`
+        : null,
+      command.closingDay ? `• Fecha dia: ${command.closingDay}` : null,
+      command.dueDay ? `• Vence dia: ${command.dueDay}` : null,
+    ].filter(Boolean);
+    return [
+      `✏️ Revisão do cartão ${command.cardName}:`,
+      ...changes,
       '',
       ...REVIEW_INSTRUCTIONS,
     ].join('\n');
@@ -916,6 +987,18 @@ async function commit(
     return card.brand === 'unknown'
       ? '✅ Cartão configurado. Não consegui identificar a bandeira automaticamente ainda.'
       : `✅ Cartão configurado com bandeira ${cardBrandLabel(card.brand)}.`;
+  }
+  if (command.intent === 'update_card') {
+    const card = await getCardByName(userId, command.cardName ?? '');
+    if (!card) return 'Não encontrei esse cartão. Digite MEUS DADOS para conferir o nome salvo.';
+    const updated = await updateCard(userId, card.id, {
+      brand: command.cardBrand,
+      limitCents: command.cardLimit ? parseCents(command.cardLimit) : undefined,
+      closingDay: command.closingDay,
+      dueDay: command.dueDay,
+    });
+    if (!updated) return 'Não consegui atualizar esse cartão agora.';
+    return `✅ Dados do cartão ${updated.name} atualizados. Bandeira: ${cardBrandLabel(updated.brand)}.`;
   }
   if (command.intent === 'record_purchase') {
     const totalCents = parseCents(command.amount ?? '');
@@ -1069,6 +1152,41 @@ async function summary(userId: string): Promise<string> {
   ].join('\n');
 }
 
+async function myData(userId: string, includeEditingHelp = false): Promise<string> {
+  const [profile, cards] = await Promise.all([getProfile(userId), listCards(userId)]);
+  const today = referenceDate();
+  const budget = effectiveMonthlyBudget(profile);
+  const spending = await spendingForPeriod(userId, formatPeriod(today));
+  const lines = [
+    includeEditingHelp ? '✏️ Dados para atualizar' : '📁 Meus dados',
+    `Orçamento mensal: ${budget ? formatBrl(budget) : 'não configurado'}`,
+    `Gasto registrado no mês: ${formatBrl(spending)}`,
+    `Saldo do orçamento: ${budget ? formatBrl(budget - spending) : 'configure seu orçamento para calcular'}`,
+    '',
+    'Cartões:',
+  ];
+  if (!cards.length) {
+    lines.push('• Nenhum cartão cadastrado.');
+  } else {
+    for (const card of cards) {
+      const used = card.outstandingCents ?? 0;
+      const available = card.availableCents ?? card.limitCents - used;
+      lines.push(
+        `• ${card.name} — ${cardBrandLabel(card.brand)} — limite ${formatBrl(card.limitCents)} — usado ${formatBrl(used)} — disponível ${formatBrl(available)} — fecha dia ${card.closingDay}, vence dia ${card.dueDay}.`,
+      );
+    }
+  }
+  if (includeEditingHelp) {
+    lines.push(
+      '',
+      'Para corrigir, envie uma frase como:',
+      '“Corrigir bandeira do cartão Mercado Pago para Visa”.',
+      'Você também pode corrigir limite, fechamento ou vencimento. Eu mostro uma revisão antes de salvar.',
+    );
+  }
+  return lines.join('\n');
+}
+
 async function finish(input: MessageInput, reply: string): Promise<string> {
   await saveInteraction(input.user.id, {
     source: input.source,
@@ -1167,6 +1285,10 @@ export async function processFinanceMessage(
   if (command.intent === 'help') return finish(input, HELP_TEXT);
   if (command.intent === 'monthly_summary')
     return finish(input, await summary(input.user.id));
+  if (command.intent === 'my_data')
+    return finish(input, await myData(input.user.id));
+  if (command.intent === 'update_data')
+    return finish(input, await myData(input.user.id, true));
   if (command.intent === 'list_purchases')
     return finish(
       input,

@@ -231,7 +231,13 @@ export async function getCardByName(userId: string, cardName: string): Promise<C
     )
     .bind(userId, normalizeText(cardName))
     .first()) as Row | null;
-  return row ? cardFromRow(row) : null;
+  if (row) return cardFromRow(row);
+  const sought = normalizeText(cardName);
+  const candidates = (await listCards(userId)).filter((card) => {
+    const saved = card.normalizedName;
+    return saved.startsWith(`${sought} `) || sought.startsWith(`${saved} `);
+  });
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 export async function getCardById(userId: string, cardId: string): Promise<Card | null> {
@@ -322,6 +328,40 @@ export async function updateCardBrand(
   await db
     .prepare('UPDATE cards SET brand = ?, updated_at = ? WHERE id = ? AND user_id = ?')
     .bind(brand, now(), cardId, userId)
+    .run();
+  return getCardById(userId, cardId);
+}
+
+export async function updateCard(
+  userId: string,
+  cardId: string,
+  changes: Partial<
+    Pick<Card, 'brand' | 'limitCents' | 'closingDay' | 'dueDay'>
+  >,
+): Promise<Card | null> {
+  const card = await getCardById(userId, cardId);
+  if (!card) return null;
+  const brand = changes.brand && changes.brand !== 'unknown' ? changes.brand : card.brand;
+  const limitCents =
+    typeof changes.limitCents === 'number' && changes.limitCents > 0
+      ? changes.limitCents
+      : card.limitCents;
+  const closingDay =
+    typeof changes.closingDay === 'number' && changes.closingDay >= 1 && changes.closingDay <= 31
+      ? changes.closingDay
+      : card.closingDay;
+  const dueDay =
+    typeof changes.dueDay === 'number' && changes.dueDay >= 1 && changes.dueDay <= 31
+      ? changes.dueDay
+      : card.dueDay;
+  const db = getDatabase();
+  await db
+    .prepare(
+      `UPDATE cards
+       SET brand = ?, limit_cents = ?, closing_day = ?, due_day = ?, updated_at = ?
+       WHERE id = ? AND user_id = ?`,
+    )
+    .bind(brand, limitCents, closingDay, dueDay, now(), cardId, userId)
     .run();
   return getCardById(userId, cardId);
 }

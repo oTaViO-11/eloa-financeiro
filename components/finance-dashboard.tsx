@@ -143,6 +143,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   const [resolvingBrandCardId, setResolvingBrandCardId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const shouldStickToBottomRef = useRef(true);
 
   const loadDashboard = useCallback(async () => {
@@ -321,6 +322,11 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
     }
   }
 
+  function startCardCorrection(cardName: string) {
+    setMessage(`Corrigir bandeira do cartão ${cardName} para `);
+    window.requestAnimationFrame(() => messageInputRef.current?.focus());
+  }
+
   const empty = !loading && data && data.messages.length === 0;
   const initialLoading = loading && !data;
 
@@ -453,6 +459,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                 <div className="flex items-end gap-3">
                   <textarea
                     id="finance-message"
+                    ref={messageInputRef}
                     value={message}
                     onChange={(event) => setMessage(event.target.value)}
                     placeholder="Ex.: Comprei mercado por R$ 85 no Pix"
@@ -473,6 +480,8 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
+                    'Meus dados',
+                    'Atualizar dados',
                     'Minha renda é R$ 2.500 e orçamento R$ 700',
                     'Cartão Nubank, limite R$ 1.500, fecha dia 5 e vence dia 12',
                     'Posso comprar algo de R$ 300 no crédito?',
@@ -556,6 +565,13 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                           : 'Identificar bandeira'}
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => startCardCorrection(card.name)}
+                      className="mt-3 block text-xs font-semibold text-[#174f40] underline-offset-2 hover:underline"
+                    >
+                      Corrigir dados do cartão
+                    </button>
                   </div>
                 );
               })}
