@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { purchaseCategoryLabel } from '@/lib/categories';
 
 type Profile = {
   whatsappNumber: string | null;
@@ -47,6 +48,7 @@ type Purchase = {
   id: string;
   description: string;
   merchant: string | null;
+  category: string;
   totalCents: number;
   paymentMethod: string;
   cardName: string | null;
@@ -560,6 +562,13 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                         purchase.cardName
                           ? ` · ${purchase.cardName}`
                           : ''}
+                      </span>
+                      <span className="rounded-full bg-[#fff3df] px-2 py-0.5 font-semibold text-[#87591d]">
+                        Categoria:{' '}
+                        {purchaseCategoryLabel(
+                          purchase.category,
+                          purchase.description,
+                        )}
                       </span>
                       {purchase.merchant && (
                         <span className="text-[#668078]">

@@ -1,4 +1,9 @@
 import { getRuntimeSecret } from '@/lib/db';
+import {
+  classifyPurchaseCategory,
+  normalizePurchaseCategory,
+  purchaseCategoryLabel,
+} from '@/lib/categories';
 import { formatBrl, normalizeText, parseCents } from '@/lib/money';
 import {
   cardOutstandingCents,
@@ -75,6 +80,7 @@ const HELP_TEXT = [
   '• Minha renda é R$ 5.000 e meu orçamento mensal é R$ 1.500',
   '• Cartão Nubank, limite R$ 3.000, fecha dia 5 e vence dia 12',
   '• Posso comprar um notebook de R$ 2.500 no Nubank em 10x?',
+  '• Eu identifico categorias como alimentação, saúde, roupas, transporte e outras.',
   '',
   'Antes de gravar algo, eu envio uma prévia para revisão. Responda SIM para salvar, CORRIGIR para ajustar ou CANCELAR para desistir.',
 ].join('\n');
@@ -198,6 +204,18 @@ function cleanText(value: unknown, max = 120): string | undefined {
   return compact ? compact.slice(0, max) : undefined;
 }
 
+function correctFinanceText(value: string): string {
+  return value
+    .replace(/\b(?:piks|pixx|pics|piz|pich)\b/giu, 'Pix')
+    .replace(/\b(?:credtio|credto|creditu|creddito|creditoo)\b/giu, 'crédito')
+    .replace(/\b(?:debto|debtio|debitoo|debito)\b/giu, 'débito')
+    .replace(/\b(?:dinhero|dinehiro|dinhiero|dinero)\b/giu, 'dinheiro')
+    .replace(/\b(?:cartaoo|cartao)\b/giu, 'cartão')
+    .replace(/\b(?:comprai|comprrei|compreei|compri)\b/giu, 'comprei')
+    .replace(/\b(?:paghei|paguey|pguei)\b/giu, 'paguei')
+    .replace(/\b(?:gastey|gasteei)\b/giu, 'gastei');
+}
+
 function cleanMoneyToken(value: string): string {
   return value.replace(/\s+/g, ' ').replace(/[.,;:!?]+$/, '');
 }
@@ -226,6 +244,27 @@ function moneyFromText(text: string, label?: RegExp): string | undefined {
     /\b(?:paguei|gastei)\s+(\d[\d.,]*)(?=\s+(?:pelo|pela|por|no|na|em)\b|$)/iu,
   )?.[1];
   return paidAmount ? canonicalMoney(paidAmount) : undefined;
+}
+
+function amountNearPayment(text: string): string | undefined {
+  const amount = text.match(
+    /\b(?:pix|dinheiro|d[eé]bito|(?:cart[aã]o\s+de\s+)?cr[eé]d(?:ito|tio))\b(?:\s+(?:por|de))?\s+(?:r\s*(?:\$|s)\s*)?(\d[\d.,]*)/iu,
+  )?.[1];
+  return amount ? canonicalMoney(amount) : undefined;
+}
+
+function amountFromPurchaseContext(
+  text: string,
+  normalized: string,
+): string | undefined {
+  if (
+    !/\b(?:comprei|paguei|gastei)\b/.test(normalized) ||
+    !paymentMethodFromText(normalized)
+  ) {
+    return undefined;
+  }
+  const numericValues = text.match(/\b\d[\d.,]*\b/gu) ?? [];
+  return numericValues.length === 1 ? canonicalMoney(numericValues[0]) : undefined;
 }
 
 function parseDateFromText(text: string, fallback: string): string {
@@ -269,17 +308,20 @@ function cleanCardName(value: unknown): string | undefined {
 
 function cardNameFromText(text: string): string | undefined {
   const alias = String.raw`([\p{L}][\p{L}\d .-]{1,48}?)`;
-  const ending = String.raw`(?=\s+(?:em\s+\d{1,2}x|por|de\s+R\$|R\$)|[,.!?]|$)`;
+  const ending = String.raw`(?=\s+(?:em\s+\d{1,2}x|em\s+parcelas?|por|de\s+R\$|R\$)|[,.!?]|$)`;
   const patterns = [
     new RegExp(
-      String.raw`\bcart[aã]o\s+de\s+cr[eé]d(?:ito|tio)\s+(?:(?:no|na)\s+)?${alias}${ending}`,
+      String.raw`\b(?:cart[aã]o\s+(?:de\s+)?cr[eé]d(?:ito|tio)|cr[eé]d(?:ito|tio))\s+(?:(?:no|na)\s+)?${alias}${ending}`,
       'iu',
     ),
     new RegExp(
-      String.raw`\bcr[eé]d(?:ito|tio)\s+(?:no|na)\s+${alias}${ending}`,
+      String.raw`\b(?:no|na)\s+cart[aã]o\s+${alias}${ending}`,
       'iu',
     ),
-    new RegExp(String.raw`\b(?:no|na|cart[aã]o)\s+${alias}${ending}`, 'iu'),
+    new RegExp(
+      String.raw`\bcart[aã]o\s+(?!de\s+(?:d[eé]bito|cr[eé]d(?:ito|tio))\b)${alias}${ending}`,
+      'iu',
+    ),
   ];
   for (const pattern of patterns) {
     const cardName = cleanCardName(text.match(pattern)?.[1]);
@@ -320,9 +362,15 @@ function descriptionFromText(text: string): string | undefined {
       'iu',
     ),
   );
-  return cleanPurchaseDescription(
-    paidFirst?.[1] ?? question?.[1] ?? purchaseFirst?.[1],
-  );
+  const described = paidFirst?.[1] ?? question?.[1] ?? purchaseFirst?.[1];
+  if (described) return cleanPurchaseDescription(described);
+  const flexible = text
+    .replace(/(?:r\s*(?:\$|s)\s*)?\d[\d.,]*(?:\s+reais?|\s+rs)?/giu, ' ')
+    .replace(/\b(?:comprei|paguei|gastei|pix|dinheiro|d[eé]bito|cr[eé]d(?:ito|tio)|cart[aã]o)\b/giu, ' ')
+    .replace(/\b(?:no|na|com|via|por|de|hoje|ontem)\b/giu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleanPurchaseDescription(flexible);
 }
 
 function merchantFromText(text: string): string | undefined {
@@ -362,8 +410,9 @@ function amountAfterKeyword(text: string, keyword: string): string | undefined {
 }
 
 function fallbackExtract(text: string, today: string): Command {
-  const normalized = normalizeText(text);
-  const date = parseDateFromText(text, today);
+  const corrected = correctFinanceText(text);
+  const normalized = normalizeText(corrected);
+  const date = parseDateFromText(corrected, today);
   if (/^(oi|ola|ol[aá]|bom dia|boa tarde|boa noite)\b/.test(normalized))
     return { intent: 'greeting' };
   if (/\b(ajuda|exemplos|o que voce faz)\b/.test(normalized))
@@ -376,10 +425,10 @@ function fallbackExtract(text: string, today: string): Command {
   if (/^(cancelar|cancela|nao|não)\b/.test(normalized))
     return { intent: 'cancel' };
 
-  const income = amountAfterKeyword(text, 'renda');
-  const budget = amountAfterKeyword(text, 'orcamento|orçamento');
-  const expenses = amountAfterKeyword(text, 'gastos? fixos?');
-  const savings = amountAfterKeyword(text, 'reserva|poupanca|poupança');
+  const income = amountAfterKeyword(corrected, 'renda');
+  const budget = amountAfterKeyword(corrected, 'orcamento|orçamento');
+  const expenses = amountAfterKeyword(corrected, 'gastos? fixos?');
+  const savings = amountAfterKeyword(corrected, 'reserva|poupanca|poupança');
   if (income || budget || expenses || savings) {
     return {
       intent: 'configure_profile',
@@ -395,7 +444,7 @@ function fallbackExtract(text: string, today: string): Command {
     /\b(limite|fecha|vence)\b/.test(normalized)
   ) {
     const name = cleanText(
-      text.match(
+      corrected.match(
         /cart[aã]o\s+([^,]+?)(?=,|\s+limite|\s+fecha|\s+vence|$)/i,
       )?.[1],
       80,
@@ -403,16 +452,20 @@ function fallbackExtract(text: string, today: string): Command {
     return {
       intent: 'add_card',
       cardName: name,
-      cardLimit: amountAfterKeyword(text, 'limite'),
-      closingDay: dayFromText(text, 'closing'),
-      dueDay: dayFromText(text, 'due'),
+      cardLimit: amountAfterKeyword(corrected, 'limite'),
+      closingDay: dayFromText(corrected, 'closing'),
+      dueDay: dayFromText(corrected, 'due'),
     };
   }
 
   const amount =
-    moneyFromText(text) ?? amountAfterKeyword(text, 'por|valor|de');
-  const installments = Number(text.match(/\b(\d{1,2})\s*x\b/i)?.[1]);
-  const cardName = cardNameFromText(text);
+    moneyFromText(corrected) ??
+    amountAfterKeyword(corrected, 'por|valor|de') ??
+    amountNearPayment(corrected) ??
+    amountFromPurchaseContext(corrected, normalized);
+  const installments = Number(corrected.match(/\b(\d{1,2})\s*x\b/i)?.[1]);
+  const cardName = cardNameFromText(corrected);
+  const paymentMethod = paymentMethodFromText(normalized);
   if (
     /\b(posso comprar|cabe no credito|cabe no cr[eé]dito|vale a pena comprar)\b/.test(
       normalized,
@@ -423,24 +476,32 @@ function fallbackExtract(text: string, today: string): Command {
       amount,
       installments: installments || 1,
       cardName,
-      description: descriptionFromText(text),
+      description: descriptionFromText(corrected),
       purchaseDate: date,
     };
   }
-  if (/\b(comprei|paguei|gastei)\b/.test(normalized)) {
-    const paymentMethod = paymentMethodFromText(normalized);
+  const description = descriptionFromText(corrected);
+  const merchant = merchantFromText(corrected);
+  const categorySource = `${description ?? ''} ${merchant ?? ''}`.trim() || corrected;
+  const hasPurchaseVerb = /\b(comprei|paguei|gastei)\b/.test(normalized);
+  const inferredPurchase = Boolean(
+    amount &&
+      paymentMethod &&
+      !/\b(posso|cabe|limite|orcamento|renda)\b/.test(normalized),
+  );
+  if (hasPurchaseVerb || inferredPurchase) {
     return {
       intent: 'record_purchase',
       amount,
-      description: descriptionFromText(text),
-      merchant: merchantFromText(text),
+      description,
+      merchant,
+      category: classifyPurchaseCategory(categorySource),
       paymentMethod,
       installments: paymentMethod === 'credit' ? installments || 1 : 1,
       cardName: paymentMethod === 'credit' ? cardName : undefined,
       purchaseDate: date,
     };
   }
-  const paymentMethod = paymentMethodFromText(normalized);
   if (paymentMethod) {
     return {
       intent: 'unknown',
@@ -498,7 +559,7 @@ function commandFromUnknown(value: unknown): Command | null {
     amount: cleanText(item.amount, 64),
     merchant: cleanText(item.merchant),
     location: cleanText(item.location),
-    category: cleanText(item.category, 80),
+    category: normalizePurchaseCategory(item.category),
     paymentMethod,
     installments:
       Number.isInteger(installments) && installments >= 1 && installments <= 48
@@ -530,6 +591,32 @@ function mergeCommand(base: Command, next: Command): Command {
     } else if (value !== undefined && value !== null && value !== '') {
       (merged as Record<string, unknown>)[key] = value;
     }
+  }
+  return merged;
+}
+
+function isNewFinancialAction(intent: Intent): boolean {
+  return [
+    'configure_profile',
+    'add_card',
+    'record_purchase',
+    'analyze_credit',
+    'record_card_payment',
+  ].includes(intent);
+}
+
+function mergeExtraction(fallback: Command, extracted: Command): Command {
+  const merged = mergeCommand(fallback, extracted);
+  if (isNewFinancialAction(fallback.intent)) merged.intent = fallback.intent;
+  if (fallback.amount) merged.amount = fallback.amount;
+  if (fallback.paymentMethod) merged.paymentMethod = fallback.paymentMethod;
+  if (fallback.cardName) merged.cardName = fallback.cardName;
+  if (fallback.category && fallback.category !== 'geral') {
+    merged.category = fallback.category;
+  }
+  if (fallback.paymentMethod && fallback.paymentMethod !== 'credit') {
+    merged.cardName = undefined;
+    merged.installments = 1;
   }
   return merged;
 }
@@ -629,8 +716,10 @@ async function extractWithAi(
           'Extraia fatos de uma mensagem em português do Brasil para um assistente financeiro. ' +
           'Nunca invente valores, datas, lojas ou cartões. Datas devem ser YYYY-MM-DD ou null. ' +
           'Valores em reais podem vir como R$, RS, real ou reais. Interprete "paguei <valor> pelo/pela <produto>" como uma compra. ' +
+          'Entenda erros comuns de digitação e frases em ordem diferente, mas nunca invente um valor, cartão ou local ausente. ' +
           'Quando a pessoa responder apenas a forma de pagamento, preserve o contexto do rascunho. ' +
           '“Cartão de crédito Mercado Pago” significa paymentMethod credit e cardName Mercado Pago. ' +
+          'Classifique compras em alimentação, saúde, roupas, transporte, moradia, educação, lazer, cuidados pessoais, pets ou geral. ' +
           'Valores devem manter a forma dita pela pessoa. Retorne somente o objeto solicitado.',
         input: text.slice(0, 2000),
         text: {
@@ -647,7 +736,7 @@ async function extractWithAi(
     const parsed = commandFromUnknown(
       JSON.parse(readOutputText(await response.json()) ?? 'null'),
     );
-    return parsed ? mergeCommand(fallback, parsed) : fallback;
+    return parsed ? mergeExtraction(fallback, parsed) : fallback;
   } catch {
     return fallback;
   }
@@ -733,6 +822,7 @@ function preview(command: Command): string {
       `• Compra: ${command.description ?? command.merchant ?? 'Compra'}`,
       `• Valor: ${formatBrl(parseCents(command.amount ?? ''))}`,
       `• Pagamento: ${labelPayment(command.paymentMethod)}`,
+      `• Categoria: ${purchaseCategoryLabel(command.category, command.description ?? command.merchant ?? '')}`,
       `• Data: ${command.purchaseDate}`,
     ];
     if (command.merchant) lines.push(`• Local: ${command.merchant}`);
@@ -830,11 +920,14 @@ async function commit(
         }),
       );
     }
+    const description = command.description ?? command.merchant ?? 'Compra';
     const result = await createPurchase(userId, {
-      description: command.description ?? command.merchant ?? 'Compra',
+      description,
       merchant: command.merchant,
       location: command.location,
-      category: command.category ?? 'outros',
+      category:
+        normalizePurchaseCategory(command.category) ??
+        classifyPurchaseCategory(`${description} ${command.merchant ?? ''}`),
       totalCents,
       paymentMethod: command.paymentMethod ?? 'pix',
       installmentsCount: command.installments ?? 1,
@@ -1034,7 +1127,11 @@ export async function processFinanceMessage(
     session.state === 'collecting_details' && session.pending
       ? (session.pending as unknown as PendingAction).command
       : null;
-  const command = pendingCommand
+  const startsNewAction = Boolean(
+    pendingCommand && isNewFinancialAction(fallback.intent),
+  );
+  if (startsNewAction) await clearSession(input.user.id);
+  const command = pendingCommand && !startsNewAction
     ? mergeCommand(pendingCommand, {
         ...enrichPendingCardAlias(pendingCommand, text, extracted),
         intent: 'unknown',
