@@ -29,15 +29,15 @@ const labels: Record<SpendingCategory, string> = {
 };
 
 const categoryRules: Array<[SpendingCategory, RegExp]> = [
-  ['saude', /\b(?:upa|consulta|medic[oa]|hospital|clinica|exame|farmacia|farmcia|remedio|dentista|terapia|plano de saude)\b/],
-  ['alimentacao', /\b(?:mercado|mercdo|supermercado|feira|padaria|restaurante|lanche|milk\s*shake|mil+k?shake|milcheik|cafe|comida|almoco|jantar|bebida|banana|ifood|delivery)\b/],
-  ['roupas', /\b(?:roupa|camisa|camiseta|calca|bermuda|vestido|sapato|tenis|sandalia|moda)\b/],
+  ['saude', /\b(?:upa|consulta|medic[oa]mentos?|hospital|clinica|exame|farmacia|farmcia|remedios?|vacina|dentista|terapia|psicolog[oa]|plano de saude)\b/],
+  ['alimentacao', /\b(?:mercado|mercdo|supermercado|feira|padaria|restaurante|lanche|milk\s*shake|mil+k?shake|milcheik|cafe|comida|almoco|jantar|bebida|banana|pizza|hamburguer|acai|sushi|ifood|delivery)\b/],
+  ['roupas', /\b(?:roupa|camisa|camiseta|blusa|calca|bermuda|short|vestido|sapato|tenis|chinelo|sandalia|moda)\b/],
   ['transporte', /\b(?:uber|99|taxi|gasolina|combustivel|onibus|passagem|estacionamento|metro|transporte)\b/],
-  ['moradia', /\b(?:aluguel|condominio|energia|luz|agua|gas|internet|casa|manutencao)\b/],
-  ['educacao', /\b(?:curso|escola|faculdade|livro|material escolar|aula)\b/],
-  ['lazer', /\b(?:cinema|show|viagem|jogo|streaming|netflix|spotify)\b/],
-  ['cuidados_pessoais', /\b(?:salao|barbearia|maquiagem|perfume|cosmetico|manicure)\b/],
-  ['pets', /\b(?:pet|racao|veterinario|veterinaria)\b/],
+  ['moradia', /\b(?:aluguel|condominio|energia|luz|agua|gas|internet|casa|manutencao|iptu)\b/],
+  ['educacao', /\b(?:curso|escola|faculdade|universidade|livro|material escolar|aula|mensalidade)\b/],
+  ['lazer', /\b(?:cinema|show|viagem|jogo|streaming|netflix|spotify|teatro|bar|balada)\b/],
+  ['cuidados_pessoais', /\b(?:salao|barbearia|maquiagem|perfume|cosmetico|manicure|shampoo|beleza)\b/],
+  ['pets', /\b(?:pet|racao|veterinario|veterinaria|animais?)\b/],
 ];
 
 export function classifyPurchaseCategory(value: string): SpendingCategory {
@@ -57,7 +57,7 @@ export function normalizePurchaseCategory(value: unknown): SpendingCategory | un
   if (/\b(?:moradia|casa|housing)\b/.test(normalized)) return 'moradia';
   if (/\b(?:educacao|education|curso|escola)\b/.test(normalized)) return 'educacao';
   if (/\b(?:lazer|entertainment|diversao)\b/.test(normalized)) return 'lazer';
-  if (/\b(?:cuidados pessoais|beleza|personal care)\b/.test(normalized)) return 'cuidados_pessoais';
+  if (/\b(?:cuidados[ -]pessoais|beleza|personal care)\b/.test(normalized)) return 'cuidados_pessoais';
   if (/\b(?:pet|animais)\b/.test(normalized)) return 'pets';
   return 'geral';
 }

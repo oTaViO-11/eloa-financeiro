@@ -22,6 +22,8 @@ import {
   getProfile,
   getSession,
   listCards,
+  listPurchases,
+  recordCardPayment,
   saveAnalysis,
   saveInteraction,
   saveSession,
@@ -95,6 +97,7 @@ const HELP_TEXT = [
   '• Ao cadastrar um cartão, eu identifico a bandeira com segurança.',
   '• Digite MEUS DADOS para ver cartões, limites, gastos e bandeiras.',
   '• Digite ATUALIZAR DADOS ou “corrigir bandeira do cartão Mercado Pago para Visa”.',
+  '• Para pagar uma fatura: “Paguei R$ 300 da fatura do Nubank”.',
   '• Posso comprar um notebook de R$ 2.500 no Nubank em 10x?',
   '• Eu identifico categorias como alimentação, saúde, roupas, transporte e outras.',
   '',
@@ -171,7 +174,7 @@ function firstInstallmentDueDate(
   closingDay: number,
   dueDay: number,
 ): string {
-  const [year, month, day] = purchaseDate.split('-').map(Number);
+  const [year, month] = purchaseDate.split('-').map(Number);
   let closing = clampDate(year, month, closingDay);
   if (purchaseDate > closing) closing = addMonths(closing, 1, closingDay);
   let due = clampDate(
@@ -243,6 +246,7 @@ function canonicalMoney(value: string): string | undefined {
   const number = cleanMoneyToken(value)
     .replace(/^r\s*(?:\$|s)\s*/iu, '')
     .replace(/\s*(?:reais?|rs)\s*$/iu, '')
+    .replace(/(?<=\d)\s+(?=\d)/gu, '')
     .trim();
   return /^\d[\d.,]*$/.test(number) ? `R$ ${number}` : undefined;
 }
@@ -251,12 +255,22 @@ function moneyFromText(text: string, label?: RegExp): string | undefined {
   const source = label ? text.match(label)?.[1] : undefined;
   if (source) return canonicalMoney(source);
 
+  const reaisAndCents = text.match(
+    /\b(\d+)\s+reais?\s+e\s+(\d{1,2})\s+centavos?\b/iu,
+  );
+  if (reaisAndCents) {
+    return canonicalMoney(`${reaisAndCents[1]},${reaisAndCents[2].padStart(2, '0')}`);
+  }
+
+  const thousands = text.match(/\b(\d{1,3})\s+mil\s+reais?\b/iu)?.[1];
+  if (thousands) return canonicalMoney(`${thousands}000`);
+
   const prefixed = text.match(
-    /(?:^|[^\p{L}\d])r\s*(?:\$|s)\s*(\d[\d.,]*)/iu,
+    /(?:^|[^\p{L}\d])r\s*(?:\$|s)\s*(\d(?:[\d.,]|\s(?=\d))*)/iu,
   )?.[1];
   if (prefixed) return canonicalMoney(prefixed);
 
-  const suffixed = text.match(/\b(\d[\d.,]*)\s+(?:reais?|rs)\b/iu)?.[1];
+  const suffixed = text.match(/\b(\d(?:[\d.,]|\s(?=\d))*)\s+(?:reais?|rs)\b/iu)?.[1];
   if (suffixed) return canonicalMoney(suffixed);
 
   const paidAmount = text.match(
@@ -272,29 +286,23 @@ function amountNearPayment(text: string): string | undefined {
   return amount ? canonicalMoney(amount) : undefined;
 }
 
-function amountFromPurchaseContext(
-  text: string,
-  normalized: string,
-): string | undefined {
-  if (
-    !/\b(?:comprei|paguei|gastei)\b/.test(normalized) ||
-    !paymentMethodFromText(normalized)
-  ) {
+function totalFromQuantityAndUnitPrice(text: string): string | undefined {
+  const match = text.match(
+    /\b(?:comprei|paguei|gastei)\s+(\d{1,4})\s+(?:[\p{L}][\p{L}\d-]*\s*){1,6}?(?:por|a)\s+((?:r\s*(?:\$|s)\s*)?\d(?:[\d.,]|\s(?=\d))*(?:\s+reais?)?)\s+(?:cada|cada\s+um(?:a)?|a\s+unidade)\b/iu,
+  );
+  if (!match) return undefined;
+  const quantity = Number(match[1]);
+  const unit = canonicalMoney(match[2]);
+  if (!Number.isSafeInteger(quantity) || quantity < 1 || !unit) return undefined;
+  try {
+    return formatBrl(parseCents(unit) * quantity);
+  } catch {
     return undefined;
   }
-  const numericValues = text.match(/\b\d[\d.,]*\b/gu) ?? [];
-  return numericValues.length === 1 ? canonicalMoney(numericValues[0]) : undefined;
 }
 
 function parseDateFromText(text: string, fallback: string): string {
-  const normalized = normalizeText(text);
-  if (/\bhoje\b/.test(normalized)) return fallback;
-  if (/\bontem\b/.test(normalized)) return addDays(fallback, -1);
-  const iso = text.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  const br = text.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/);
-  if (br) return clampDate(Number(br[3]), Number(br[2]), Number(br[1]));
-  return fallback;
+  return explicitDateFromText(text) ?? fallback;
 }
 
 function paymentMethodFromText(normalized: string): PaymentMethod | undefined {
@@ -302,7 +310,8 @@ function paymentMethodFromText(normalized: string): PaymentMethod | undefined {
   if (/\b(?:debito|cartao\s+(?:de\s+)?debito)\b/.test(normalized))
     return 'debit';
   if (/\b(dinheiro|especie)\b/.test(normalized)) return 'cash';
-  if (/\b(?:credito|credtio|cartao)\b/.test(normalized)) return 'credit';
+  if (/\b(?:credito|credtio|cartao\s+(?:de\s+)?credito|(?:no|na|com)\s+cartao)\b/.test(normalized))
+    return 'credit';
   return undefined;
 }
 
@@ -312,7 +321,7 @@ function cleanCardName(value: unknown): string | undefined {
       /^(?:cart[aã]o\s+)?(?:de\s+)?cr[eé]d(?:ito|tio)(?:\s+(?:no|na))?\s*/iu,
       '',
     )
-    .replace(/^(?:no|na|e)\s+/iu, '')
+    .replace(/^(?:no|na|do|da|e)\s+/iu, '')
     .replace(
       /\s+(?:visa|mastercard|master\s*card|elo|hipercard|american\s+express|amex|diners(?:\s+club)?|discover|jcb|aura|cabal|sorocred)$/iu,
       '',
@@ -354,10 +363,27 @@ function cardNameFromText(text: string): string | undefined {
 }
 
 function cardNameFromCorrectionText(text: string): string | undefined {
-  const match = text.match(
+  const patterns = [
+    /(?:bandeira|limite|fecha|fechamento|vence|vencimento)\s+(?:do|da)\s+(?:cart[aã]o\s+)?(.+?)(?=\s+(?:para|é|eh|=|limite|fecha|vence|vencimento|fechamento)\b|[,.!?]|$)/iu,
     /(?:do|da|no|na)\s+cart[aã]o\s+(.+?)(?=\s+(?:para|é|eh|=|limite|fecha|vence|vencimento|fechamento)\b|[,.!?]|$)/iu,
-  );
-  return cleanCardName(match?.[1]) ?? cardNameFromText(text);
+  ];
+  for (const pattern of patterns) {
+    const cardName = cleanCardName(text.match(pattern)?.[1]);
+    if (cardName) return cardName;
+  }
+  return cardNameFromText(text);
+}
+
+function cardNameFromInvoiceText(text: string): string | undefined {
+  const patterns = [
+    /\bfatura\s+(?:do|da)\s+(?:cart[aã]o\s+)?(.+?)(?=\s+(?:por|de|em)\s+(?:r\s*(?:\$|s)\s*)?\d|\s+(?:hoje|ontem|anteontem)\b|[,.!?]|$)/iu,
+    /\b(?:do|da)\s+fatura\s+(?:do|da)\s+(?:cart[aã]o\s+)?(.+?)(?=\s+(?:por|de|em)\s+(?:r\s*(?:\$|s)\s*)?\d|\s+(?:hoje|ontem|anteontem)\b|[,.!?]|$)/iu,
+  ];
+  for (const pattern of patterns) {
+    const cardName = cleanCardName(text.match(pattern)?.[1]);
+    if (cardName) return cardName;
+  }
+  return undefined;
 }
 
 function cleanPurchaseDescription(value: unknown): string | undefined {
@@ -373,7 +399,7 @@ function cleanPurchaseDescription(value: unknown): string | undefined {
 }
 
 function descriptionFromText(text: string): string | undefined {
-  const amount = String.raw`(?:r\s*(?:\$|s)\s*)?\d[\d.,]*(?:\s+reais?)?`;
+  const amount = String.raw`(?:\d+\s+reais?\s+e\s+\d{1,2}\s+centavos?|(?:r\s*(?:\$|s)\s*)?\d[\d.,]*(?:\s+reais?)?)`;
   const paidFirst = text.match(
     new RegExp(
       String.raw`\b(?:paguei|gastei)\s+${amount}\s+(?:pelo|pela|por|no|na|em)\s+(.+?)(?=\s+(?:no|na|com)\s+(?:pix|cr[eé]dito|d[eé]bito|cart[aã]o|dinheiro)|\s+(?:hoje|ontem)\b|[,.!?]|$)`,
@@ -423,8 +449,8 @@ function dayFromText(
 ): number | undefined {
   const pattern =
     kind === 'closing'
-      ? /(?:fecha|fechamento)\s*(?:dia)?\s*(\d{1,2})/i
-      : /(?:vence|vencimento)\s*(?:dia)?\s*(\d{1,2})/i;
+      ? /(?:fecha|fechamento)\b[^\d]{0,60}?(?:dia\s*)?(\d{1,2})/i
+      : /(?:vence|vencimento)\b[^\d]{0,60}?(?:dia\s*)?(\d{1,2})/i;
   const value = Number(text.match(pattern)?.[1]);
   return value >= 1 && value <= 31 ? value : undefined;
 }
@@ -432,7 +458,7 @@ function dayFromText(
 function amountAfterKeyword(text: string, keyword: string): string | undefined {
   const match = text.match(
     new RegExp(
-      String.raw`\b(?:${keyword})\b[^\d]{0,18}((?:r\s*(?:\$|s)\s*)?\d[\d.,]*(?:\s+reais?)?)`,
+      String.raw`\b(?:${keyword})\b[^\d]{0,80}((?:r\s*(?:\$|s)\s*)?\d(?:[\d.,]|\s(?=\d))*(?:\s+reais?)?)`,
       'iu',
     ),
   );
@@ -443,21 +469,37 @@ function fallbackExtract(text: string, today: string): Command {
   const corrected = correctFinanceText(text);
   const normalized = normalizeText(corrected);
   const date = parseDateFromText(corrected, today);
-  if (/^(oi|ola|ol[aá]|bom dia|boa tarde|boa noite)\b/.test(normalized))
+  const hasFinancialAction = /\b(?:comprei|paguei|gastei|cartao|cartão|renda|orcamento|orçamento)\b/.test(normalized);
+  if (/^(?:o+[iy]+|ol+a+|bom dia|boa tarde|boa noite)\b/.test(normalized) && !hasFinancialAction)
     return { intent: 'greeting' };
-  if (/\b(ajuda|exemplos|o que voce faz)\b/.test(normalized))
+  if (/\b(?:ajud+a+|ajd|exemplos|o que voce faz|como funciona)\b/.test(normalized) && !hasFinancialAction)
     return { intent: 'help' };
   if (/^(resumo|meu resumo|como estou)\b/.test(normalized))
     return { intent: 'monthly_summary' };
-  if (/^(?:meus?\s+dados|ver\s+(?:meus?\s+)?dados|dados\s+(?:salvos|cadastrados))\b/.test(normalized))
+  if (/^(?:meus?\s+dad+os?|ver\s+(?:meus?\s+)?dad+os?|dados\s+(?:salvos|cadastrados)|minhas?\s+informacoes|(?:quais|ver)\s+(?:meus?\s+)?cartoes)\b/.test(normalized))
     return { intent: 'my_data' };
-  if (/^(?:atualizar|editar|corrigir)\s+(?:meus?\s+)?dados\b/.test(normalized))
+  if (/^(?:atualizar|atualiza|editar|corrigir|corrige|alterar|mudar|quero\s+(?:mudar|alterar|atualizar))\s+(?:os?\s+)?(?:meus?\s+)?dados\b/.test(normalized))
     return { intent: 'update_data' };
   if (/\b(ultimas compras|minhas compras|listar compras)\b/.test(normalized))
     return { intent: 'list_purchases' };
   if (/^(confirmar|confirmo)\b/.test(normalized)) return { intent: 'confirm' };
   if (/^(cancelar|cancela|nao|não)\b/.test(normalized))
     return { intent: 'cancel' };
+
+  const isInvoicePayment =
+    /\b(?:pagar|paguei|quitar|quitei)\b/.test(normalized) &&
+    /\bfatura\b/.test(normalized);
+  if (isInvoicePayment) {
+    return {
+      intent: 'record_card_payment',
+      amount:
+        totalFromQuantityAndUnitPrice(corrected) ??
+        moneyFromText(corrected) ??
+        amountAfterKeyword(corrected, 'fatura|paguei|quitei'),
+      cardName: cardNameFromInvoiceText(corrected),
+      purchaseDate: date,
+    };
+  }
 
   const income = amountAfterKeyword(corrected, 'renda');
   const budget = amountAfterKeyword(corrected, 'orcamento|orçamento');
@@ -507,10 +549,10 @@ function fallbackExtract(text: string, today: string): Command {
   }
 
   const amount =
+    totalFromQuantityAndUnitPrice(corrected) ??
     moneyFromText(corrected) ??
     amountAfterKeyword(corrected, 'por|valor|de') ??
-    amountNearPayment(corrected) ??
-    amountFromPurchaseContext(corrected, normalized);
+    amountNearPayment(corrected);
   const installments = Number(corrected.match(/\b(\d{1,2})\s*x\b/i)?.[1]);
   const cardName = cardNameFromText(corrected);
   const paymentMethod = paymentMethodFromText(normalized);
@@ -637,6 +679,8 @@ function mergeCommand(base: Command, next: Command): Command {
   >) {
     if (key === 'intent') {
       if (value !== 'unknown') merged.intent = value as Intent;
+    } else if (key === 'cardBrand' && value === 'unknown') {
+      continue;
     } else if (value !== undefined && value !== null && value !== '') {
       (merged as Record<string, unknown>)[key] = value;
     }
@@ -672,23 +716,6 @@ function mergeExtraction(fallback: Command, extracted: Command): Command {
     merged.installments = 1;
   }
   return merged;
-}
-
-function enrichPendingCardAlias(
-  base: Command,
-  text: string,
-  extracted: Command,
-): Command {
-  if (extracted.cardName || !missingFields(base).includes('cartão'))
-    return extracted;
-  const normalized = normalizeText(text);
-  if (
-    isPositiveConfirmation(normalized) ||
-    /^(?:cancelar|cancela|nao)\b/.test(normalized)
-  )
-    return extracted;
-  const cardName = cleanCardName(text);
-  return cardName ? { ...extracted, cardName } : extracted;
 }
 
 async function safetyIdentifier(userId: string): Promise<string> {
@@ -776,6 +803,7 @@ async function extractWithAi(
           '“Cartão de crédito Mercado Pago” significa paymentMethod credit e cardName Mercado Pago. ' +
           'Os comandos “meus dados” e “atualizar dados” usam os intents my_data e update_data. ' +
           'Para “corrigir bandeira do cartão Mercado Pago para Visa”, use update_card, cardName Mercado Pago e cardBrand visa. ' +
+          'Para “paguei R$ 300 da fatura do Nubank”, use record_card_payment, cardName Nubank e amount R$ 300; isso nunca é uma compra nova. ' +
           'Se a pessoa informar uma bandeira de cartão, use cardBrand; não invente uma bandeira ausente. ' +
           'Classifique compras em alimentação, saúde, roupas, transporte, moradia, educação, lazer, cuidados pessoais, pets ou geral. ' +
           'Valores devem manter a forma dita pela pessoa. Retorne somente o objeto solicitado.',
@@ -828,6 +856,12 @@ function missingFields(command: Command): string[] {
       !hasChange && 'dado a corrigir',
     ].filter(Boolean) as string[];
   }
+  if (command.intent === 'record_card_payment') {
+    return [
+      !command.amount && 'valor do pagamento',
+      !command.cardName && 'cartão',
+    ].filter(Boolean) as string[];
+  }
   if (command.intent === 'record_purchase') {
     const fields = [
       !command.amount && 'valor',
@@ -856,6 +890,7 @@ function missingFields(command: Command): string[] {
 function questionFor(field: string): string {
   const questions: Record<string, string> = {
     valor: 'Qual foi o valor? Ex.: R$ 42,90.',
+    'valor do pagamento': 'Qual foi o valor pago na fatura? Ex.: R$ 250,00.',
     'forma de pagamento': 'Como pagou: crédito, débito, Pix ou dinheiro?',
     data: 'Qual foi a data? Use DD/MM/AAAA, hoje ou ontem.',
     cartão: 'Qual é o apelido do cartão?',
@@ -915,6 +950,16 @@ function preview(command: Command): string {
       ...REVIEW_INSTRUCTIONS,
     ].join('\n');
   }
+  if (command.intent === 'record_card_payment') {
+    return [
+      '💸 Revisão do pagamento da fatura:',
+      `• Cartão: ${command.cardName}`,
+      `• Valor pago: ${formatBrl(parseCents(command.amount ?? ''))}`,
+      `• Data: ${command.purchaseDate}`,
+      '',
+      ...REVIEW_INSTRUCTIONS,
+    ].join('\n');
+  }
   if (command.intent === 'update_card') {
     const changes = [
       command.cardBrand && command.cardBrand !== 'unknown'
@@ -952,9 +997,134 @@ function preview(command: Command): string {
 }
 
 function isPositiveConfirmation(value: string): boolean {
-  return /^(?:s|sim|confirmar|confirmo|pode(?:\s+(?:salvar|registrar|confirmar))?|salvar|registre|registrar|ok(?:ay)?|certo|isso|ta)(?:\b|$)/.test(
+  return /^(?:s+|s+i+m+|confirmar|confirmo|confirmado|pode(?:\s+(?:salvar|registrar|confirmar))?|salvar|registre|registrar|ok(?:ay)?|certo|isso|ta|beleza|blz|fechado)(?:\b|$)/.test(
     value,
   );
+}
+
+function isCancellation(value: string): boolean {
+  return /^(?:cancel(?:ar|a|e)?|cancela(?:\s+isso)?|nao(?:\s+quero)?|desist(?:ir|o)|pare|parar)(?:\b|[.!?]|$)/.test(
+    value,
+  );
+}
+
+function isCorrectionRequest(value: string): boolean {
+  return /^(?:corrig(?:ir|e|a)|alter(?:ar|e)|edit(?:ar|e)|atualiz(?:ar|e)|mud(?:ar|e)|(?:quero\s+)?ajustar)(?:\b|$)/.test(
+    value,
+  );
+}
+
+function explicitDateFromText(text: string): string | undefined {
+  const normalized = normalizeText(text);
+  const today = referenceDate();
+  if (/\bhoje\b/.test(normalized)) return today;
+  if (/\bontem\b/.test(normalized)) return addDays(today, -1);
+  if (/\banteontem\b/.test(normalized)) return addDays(today, -2);
+  const iso = text.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
+  if (iso) {
+    const candidate = `${iso[1]}-${iso[2]}-${iso[3]}`;
+    return clampDate(Number(iso[1]), Number(iso[2]), Number(iso[3])) === candidate
+      ? candidate
+      : undefined;
+  }
+  const br = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](20\d{2})\b/);
+  if (br) {
+    const candidate = clampDate(Number(br[3]), Number(br[2]), Number(br[1]));
+    return candidate.slice(8, 10) === String(Number(br[1])).padStart(2, '0') &&
+      candidate.slice(5, 7) === String(Number(br[2])).padStart(2, '0')
+      ? candidate
+      : undefined;
+  }
+  return undefined;
+}
+
+function followUpDetails(
+  text: string,
+  pending: Command,
+): Command {
+  const corrected = correctFinanceText(text);
+  const normalized = normalizeText(corrected);
+  const explicitDate = explicitDateFromText(corrected);
+  const installments = Number(
+    corrected.match(/\b(\d{1,2})\s*(?:x|vez(?:es)?|parcelas?)\b/iu)?.[1],
+  );
+  const bareDay = /^\s*(\d{1,2})\s*$/.test(corrected)
+    ? Number(corrected.trim())
+    : undefined;
+  const pendingFields = missingFields(pending);
+  const inferredCardName = pendingFields.includes('nome do cartão') || pendingFields.includes('cartão')
+    ? cardNameFromCorrectionText(corrected) ??
+      cardNameFromText(corrected) ??
+      cleanCardName(corrected)
+    : undefined;
+  return {
+    intent: 'unknown',
+    amount:
+      moneyFromText(corrected) ??
+      amountAfterKeyword(corrected, 'valor|paguei|quitei') ??
+      undefined,
+    paymentMethod: paymentMethodFromText(normalized),
+    installments:
+      Number.isInteger(installments) && installments >= 1 && installments <= 48
+        ? installments
+        : undefined,
+    cardName: inferredCardName,
+    cardBrand: normalizeCardBrand(corrected),
+    cardLimit: amountAfterKeyword(corrected, 'limite'),
+    closingDay:
+      dayFromText(corrected, 'closing') ??
+      (pendingFields.includes('dia de fechamento') ? bareDay : undefined),
+    dueDay:
+      dayFromText(corrected, 'due') ??
+      (pendingFields.includes('dia de vencimento') ? bareDay : undefined),
+    purchaseDate: explicitDate,
+    monthlyIncome: amountAfterKeyword(corrected, 'renda|salario|salário'),
+    fixedExpenses: amountAfterKeyword(corrected, 'gastos? fixos?'),
+    savingsGoal: amountAfterKeyword(corrected, 'reserva|poupanca|poupança'),
+    monthlyBudget: amountAfterKeyword(corrected, 'orcamento|orçamento'),
+  };
+}
+
+function hasCompleteNewAction(command: Command): boolean {
+  if (command.intent === 'configure_profile') {
+    return Boolean(
+      command.monthlyIncome ||
+        command.fixedExpenses ||
+        command.savingsGoal ||
+        command.monthlyBudget,
+    );
+  }
+  if (command.intent === 'add_card') {
+    return Boolean(
+      command.cardName &&
+        command.cardLimit &&
+        command.closingDay &&
+        command.dueDay,
+    );
+  }
+  if (command.intent === 'record_purchase') {
+    return Boolean(
+      command.amount &&
+        command.paymentMethod &&
+        (command.paymentMethod !== 'credit' || command.cardName),
+    );
+  }
+  if (command.intent === 'analyze_credit') {
+    return Boolean(command.amount && command.cardName && command.installments);
+  }
+  if (command.intent === 'record_card_payment') {
+    return Boolean(command.amount && command.cardName);
+  }
+  if (command.intent === 'update_card') {
+    return Boolean(
+      command.cardName &&
+        ((command.cardBrand && command.cardBrand !== 'unknown') ||
+          command.cardLimit ||
+          command.closingDay ||
+          command.dueDay),
+    );
+  }
+  return false;
 }
 
 async function commit(
@@ -999,6 +1169,20 @@ async function commit(
     });
     if (!updated) return 'Não consegui atualizar esse cartão agora.';
     return `✅ Dados do cartão ${updated.name} atualizados. Bandeira: ${cardBrandLabel(updated.brand)}.`;
+  }
+  if (command.intent === 'record_card_payment') {
+    const card = await getCardByName(userId, command.cardName ?? '');
+    if (!card)
+      return 'Não encontrei esse cartão. Digite MEUS DADOS para conferir o nome salvo.';
+    const payment = await recordCardPayment(userId, {
+      cardId: card.id,
+      amountCents: parseCents(command.amount ?? ''),
+      paidAt: command.purchaseDate ?? referenceDate(),
+      idempotencyKey: `${source}:${pending.originMessageId}`.slice(0, 240),
+    });
+    return payment.created
+      ? `✅ Pagamento de ${formatBrl(payment.appliedCents)} registrado na fatura do ${card.name}.`
+      : '✅ Esse pagamento da fatura já estava registrado.';
   }
   if (command.intent === 'record_purchase') {
     const totalCents = parseCents(command.amount ?? '');
@@ -1187,6 +1371,45 @@ async function myData(userId: string, includeEditingHelp = false): Promise<strin
   return lines.join('\n');
 }
 
+async function recentPurchases(userId: string): Promise<string> {
+  const purchases = await listPurchases(userId, 8);
+  if (!purchases.length) return '🧾 Ainda não há compras registradas.';
+  return [
+    '🧾 Últimas compras:',
+    ...purchases.map((purchase) => {
+      const details = [
+        `${purchase.description} — ${formatBrl(purchase.totalCents)}`,
+        labelPayment(purchase.paymentMethod as PaymentMethod | undefined),
+        purchase.cardName,
+        purchase.purchasedAt.split('-').reverse().join('/'),
+      ].filter(Boolean);
+      return `• ${details.join(' · ')}`;
+    }),
+  ].join('\n');
+}
+
+async function informationalReply(userId: string, intent: Intent): Promise<string> {
+  if (intent === 'greeting')
+    return 'Olá! Eu sou a Eloá. Envie uma compra ou digite AJUDA para ver exemplos.';
+  if (intent === 'help') return HELP_TEXT;
+  if (intent === 'monthly_summary') return summary(userId);
+  if (intent === 'my_data') return myData(userId);
+  if (intent === 'update_data') return myData(userId, true);
+  if (intent === 'list_purchases') return recentPurchases(userId);
+  return '';
+}
+
+function isInformationalIntent(intent: Intent): boolean {
+  return [
+    'greeting',
+    'help',
+    'monthly_summary',
+    'my_data',
+    'update_data',
+    'list_purchases',
+  ].includes(intent);
+}
+
 async function finish(input: MessageInput, reply: string): Promise<string> {
   await saveInteraction(input.user.id, {
     source: input.source,
@@ -1211,15 +1434,10 @@ export async function processFinanceMessage(
   if (hasSensitiveData(text)) return finish(input, SENSITIVE_WARNING);
 
   const normalized = normalizeText(text);
-  const session = await getSession(input.user.id);
-  if (
-    normalized === 'cancelar' ||
-    normalized === 'cancela' ||
-    normalized === 'nao' ||
-    normalized === 'não'
-  ) {
+  const session = await getSession(input.user.id, input.source);
+  if (isCancellation(normalized)) {
     if (session.state !== 'idle') {
-      await clearSession(input.user.id);
+      await clearSession(input.user.id, input.source);
       return finish(
         input,
         'Tudo bem. O rascunho foi cancelado e nada foi registrado.',
@@ -1230,9 +1448,10 @@ export async function processFinanceMessage(
 
   if (session.state === 'awaiting_confirmation' && session.pending) {
     const pending = session.pending as unknown as PendingAction;
-    if (/^(corrigir|alterar|editar)\b/.test(normalized)) {
+    if (isCorrectionRequest(normalized)) {
       await saveSession(
         input.user.id,
+        input.source,
         'collecting_details',
         pending as unknown as Record<string, unknown>,
       );
@@ -1244,7 +1463,7 @@ export async function processFinanceMessage(
     if (isPositiveConfirmation(normalized)) {
       try {
         const reply = await commit(input.user.id, pending, input.source);
-        await clearSession(input.user.id);
+        await clearSession(input.user.id, input.source);
         return finish(input, reply);
       } catch (error) {
         return finish(
@@ -1261,39 +1480,28 @@ export async function processFinanceMessage(
 
   const today = referenceDate();
   const fallback = fallbackExtract(text, today);
-  const extracted = await extractWithAi(text, input.user.id, fallback);
   const pendingCommand =
     session.state === 'collecting_details' && session.pending
       ? (session.pending as unknown as PendingAction).command
       : null;
+  if (pendingCommand && isInformationalIntent(fallback.intent)) {
+    const reply = await informationalReply(input.user.id, fallback.intent);
+    return finish(
+      input,
+      `${reply}\n\nSeu rascunho continua aberto. Responda ao dado que eu pedi, ou diga CANCELAR para desistir.`,
+    );
+  }
+  const extracted = await extractWithAi(text, input.user.id, fallback);
   const startsNewAction = Boolean(
-    pendingCommand && isNewFinancialAction(fallback.intent),
+    pendingCommand && hasCompleteNewAction(fallback),
   );
-  if (startsNewAction) await clearSession(input.user.id);
+  if (startsNewAction) await clearSession(input.user.id, input.source);
   const command = pendingCommand && !startsNewAction
-    ? mergeCommand(pendingCommand, {
-        ...enrichPendingCardAlias(pendingCommand, text, extracted),
-        intent: 'unknown',
-      })
+    ? mergeCommand(pendingCommand, followUpDetails(text, pendingCommand))
     : extracted;
 
-  if (command.intent === 'greeting')
-    return finish(
-      input,
-      'Olá! Eu sou a Eloá. Envie uma compra ou digite AJUDA para ver exemplos.',
-    );
-  if (command.intent === 'help') return finish(input, HELP_TEXT);
-  if (command.intent === 'monthly_summary')
-    return finish(input, await summary(input.user.id));
-  if (command.intent === 'my_data')
-    return finish(input, await myData(input.user.id));
-  if (command.intent === 'update_data')
-    return finish(input, await myData(input.user.id, true));
-  if (command.intent === 'list_purchases')
-    return finish(
-      input,
-      'Abra a seção “Compras recentes” para ver seus últimos registros.',
-    );
+  if (isInformationalIntent(command.intent))
+    return finish(input, await informationalReply(input.user.id, command.intent));
   if (command.intent === 'confirm')
     return finish(input, 'Não há um rascunho pronto para confirmar.');
   if (command.intent === 'cancel')
@@ -1307,9 +1515,19 @@ export async function processFinanceMessage(
   if (
     !command.purchaseDate &&
     (command.intent === 'record_purchase' ||
-      command.intent === 'analyze_credit')
+      command.intent === 'analyze_credit' ||
+      command.intent === 'record_card_payment')
   ) {
     command.purchaseDate = today;
+  }
+  if (
+    command.cardName &&
+    ['record_purchase', 'record_card_payment', 'update_card', 'analyze_credit'].includes(
+      command.intent,
+    )
+  ) {
+    const knownCard = await getCardByName(input.user.id, command.cardName);
+    if (knownCard) command.cardName = knownCard.name;
   }
   const missing = missingFields(command);
   if (missing.length) {
@@ -1320,6 +1538,7 @@ export async function processFinanceMessage(
     };
     await saveSession(
       input.user.id,
+      input.source,
       'collecting_details',
       pending as unknown as Record<string, unknown>,
     );
@@ -1352,6 +1571,7 @@ export async function processFinanceMessage(
     };
     await saveSession(
       input.user.id,
+      input.source,
       'awaiting_confirmation',
       pending as unknown as Record<string, unknown>,
     );

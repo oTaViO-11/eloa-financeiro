@@ -1,6 +1,6 @@
 import { normalizeCardBrand, type CardBrand } from '@/lib/card-brand';
 import { getDatabase } from '@/lib/db';
-import { normalizeText } from '@/lib/money';
+import { formatBrl, normalizeText } from '@/lib/money';
 
 export type AuthenticatedUser = {
   id: string;
@@ -219,6 +219,23 @@ export async function findUserByWhatsapp(waId: string): Promise<AuthenticatedUse
   };
 }
 
+function editDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    let diagonal = previous[0];
+    previous[0] = leftIndex;
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const above = previous[rightIndex];
+      const substitution = diagonal + Number(left[leftIndex - 1] !== right[rightIndex - 1]);
+      const insertion = previous[rightIndex - 1] + 1;
+      const deletion = above + 1;
+      previous[rightIndex] = Math.min(substitution, insertion, deletion);
+      diagonal = above;
+    }
+  }
+  return previous[right.length];
+}
+
 export async function getCardByName(userId: string, cardName: string): Promise<Card | null> {
   const db = getDatabase();
   const row = (await db
@@ -237,7 +254,25 @@ export async function getCardByName(userId: string, cardName: string): Promise<C
     const saved = card.normalizedName;
     return saved.startsWith(`${sought} `) || sought.startsWith(`${saved} `);
   });
-  return candidates.length === 1 ? candidates[0] : null;
+  if (candidates.length === 1) return candidates[0];
+
+  const compactSought = sought.replace(/\s+/g, '');
+  if (compactSought.length < 4) return null;
+  const fuzzyMatches = (await listCards(userId))
+    .map((card) => ({
+      card,
+      distance: editDistance(compactSought, card.normalizedName.replace(/\s+/g, '')),
+    }))
+    .filter(({ card, distance }) => {
+      const compactSaved = card.normalizedName.replace(/\s+/g, '');
+      const acceptedDistance = Math.max(1, Math.ceil(Math.max(compactSought.length, compactSaved.length) * 0.2));
+      return distance <= acceptedDistance;
+    })
+    .sort((left, right) => left.distance - right.distance);
+
+  if (!fuzzyMatches.length) return null;
+  if (fuzzyMatches.length > 1 && fuzzyMatches[0].distance === fuzzyMatches[1].distance) return null;
+  return fuzzyMatches[0].card;
 }
 
 export async function getCardById(userId: string, cardId: string): Promise<Card | null> {
@@ -467,6 +502,79 @@ export async function cardOutstandingCents(userId: string, cardId: string): Prom
   return asNumber(row?.total);
 }
 
+export async function recordCardPayment(
+  userId: string,
+  input: {
+    cardId: string;
+    amountCents: number;
+    paidAt: string;
+    idempotencyKey: string;
+  },
+): Promise<{ created: boolean; appliedCents: number }> {
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
+    throw new Error('Informe um valor de pagamento válido.');
+  }
+  const db = getDatabase();
+  const existing = (await db
+    .prepare(
+      'SELECT amount_cents FROM card_payments WHERE user_id = ? AND idempotency_key = ?',
+    )
+    .bind(userId, input.idempotencyKey)
+    .first()) as Row | null;
+  if (existing) return { created: false, appliedCents: asNumber(existing.amount_cents) };
+
+  const open = await db
+    .prepare(
+      `SELECT i.id, i.amount_cents, i.paid_cents
+       FROM installments i
+       JOIN cards c ON c.id = i.card_id
+       WHERE c.user_id = ? AND i.card_id = ? AND i.paid_cents < i.amount_cents
+       ORDER BY i.due_date ASC, i.id ASC`,
+    )
+    .bind(userId, input.cardId)
+    .all<Row>();
+  const outstanding = open.results.reduce(
+    (total, row) => total + asNumber(row.amount_cents) - asNumber(row.paid_cents),
+    0,
+  );
+  if (outstanding <= 0) throw new Error('Esse cartão não tem fatura em aberto.');
+  if (input.amountCents > outstanding) {
+    throw new Error(`O valor é maior que a fatura em aberto de ${formatBrl(outstanding)}.`);
+  }
+
+  let remaining = input.amountCents;
+  const statements = [
+    db
+      .prepare(
+        `INSERT INTO card_payments (
+          id, user_id, card_id, amount_cents, paid_at, idempotency_key, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        newId('card_payment'),
+        userId,
+        input.cardId,
+        input.amountCents,
+        input.paidAt,
+        input.idempotencyKey,
+        now(),
+      ),
+  ];
+  for (const row of open.results) {
+    if (remaining <= 0) break;
+    const installmentRemaining = asNumber(row.amount_cents) - asNumber(row.paid_cents);
+    const applied = Math.min(remaining, installmentRemaining);
+    statements.push(
+      db
+        .prepare('UPDATE installments SET paid_cents = paid_cents + ? WHERE id = ?')
+        .bind(applied, String(row.id)),
+    );
+    remaining -= applied;
+  }
+  await db.batch(statements);
+  return { created: true, appliedCents: input.amountCents };
+}
+
 export async function spendingForPeriod(userId: string, period: string): Promise<number> {
   const db = getDatabase();
   const [cash, credit] = await db.batch([
@@ -490,16 +598,16 @@ export async function spendingForPeriod(userId: string, period: string): Promise
   return cashTotal + creditTotal;
 }
 
-export async function getSession(userId: string): Promise<PendingSession> {
+export async function getSession(userId: string, source: string): Promise<PendingSession> {
   const db = getDatabase();
   const row = (await db
-    .prepare('SELECT state, pending_action_json, expires_at FROM conversation_sessions WHERE user_id = ?')
-    .bind(userId)
+    .prepare('SELECT state, pending_action_json, expires_at FROM conversation_sessions WHERE user_id = ? AND source = ?')
+    .bind(userId, source)
     .first()) as Row | null;
   if (!row) return { state: 'idle', pending: null, expiresAt: null };
   const expiresAt = row.expires_at ? String(row.expires_at) : null;
   if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) {
-    await clearSession(userId);
+    await clearSession(userId, source);
     return { state: 'idle', pending: null, expiresAt: null };
   }
   let pending: Record<string, unknown> | null = null;
@@ -520,6 +628,7 @@ export async function getSession(userId: string): Promise<PendingSession> {
 
 export async function saveSession(
   userId: string,
+  source: string,
   state: PendingSession['state'],
   pending: Record<string, unknown> | null,
 ): Promise<void> {
@@ -528,28 +637,28 @@ export async function saveSession(
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
   await db
     .prepare(
-      `INSERT INTO conversation_sessions (user_id, state, pending_action_json, expires_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(user_id) DO UPDATE SET
+      `INSERT INTO conversation_sessions (user_id, source, state, pending_action_json, expires_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, source) DO UPDATE SET
          state = excluded.state,
          pending_action_json = excluded.pending_action_json,
          expires_at = excluded.expires_at,
          updated_at = excluded.updated_at`,
     )
-    .bind(userId, state, pending ? JSON.stringify(pending) : null, expiresAt, timestamp)
+    .bind(userId, source, state, pending ? JSON.stringify(pending) : null, expiresAt, timestamp)
     .run();
 }
 
-export async function clearSession(userId: string): Promise<void> {
+export async function clearSession(userId: string, source: string): Promise<void> {
   const db = getDatabase();
   await db
     .prepare(
-      `INSERT INTO conversation_sessions (user_id, state, pending_action_json, expires_at, updated_at)
-       VALUES (?, 'idle', NULL, NULL, ?)
-       ON CONFLICT(user_id) DO UPDATE SET
+      `INSERT INTO conversation_sessions (user_id, source, state, pending_action_json, expires_at, updated_at)
+       VALUES (?, ?, 'idle', NULL, NULL, ?)
+       ON CONFLICT(user_id, source) DO UPDATE SET
          state = 'idle', pending_action_json = NULL, expires_at = NULL, updated_at = excluded.updated_at`,
     )
-    .bind(userId, now())
+    .bind(userId, source, now())
     .run();
 }
 

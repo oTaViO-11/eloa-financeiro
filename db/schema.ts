@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
@@ -128,15 +128,20 @@ export const cardPayments = sqliteTable(
   ],
 );
 
-export const conversationSessions = sqliteTable('conversation_sessions', {
-  userId: text('user_id')
-    .primaryKey()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  state: text('state').notNull().default('idle'),
-  pendingActionJson: text('pending_action_json'),
-  expiresAt: text('expires_at'),
-  updatedAt: text('updated_at').notNull(),
-});
+export const conversationSessions = sqliteTable(
+  'conversation_sessions',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    source: text('source').notNull(),
+    state: text('state').notNull().default('idle'),
+    pendingActionJson: text('pending_action_json'),
+    expiresAt: text('expires_at'),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.source] })],
+);
 
 export const conversationMessages = sqliteTable(
   'conversation_messages',

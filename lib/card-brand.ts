@@ -35,8 +35,8 @@ const labels: Record<CardBrand, string> = {
 export function normalizeCardBrand(value: unknown): CardBrand {
   if (typeof value !== 'string') return 'unknown';
   const normalized = normalizeText(value);
-  if (/\bvisa\b/.test(normalized)) return 'visa';
-  if (/\b(?:master\s*card|mastercard)\b/.test(normalized))
+  if (/\b(?:visa|viza)\b/.test(normalized)) return 'visa';
+  if (/\b(?:master[\s-]*card|mastercard)\b/.test(normalized))
     return 'mastercard';
   if (/\belo\b/.test(normalized)) return 'elo';
   if (/\bhipercard\b/.test(normalized)) return 'hipercard';
