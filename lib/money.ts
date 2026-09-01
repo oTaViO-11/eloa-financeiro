@@ -10,7 +10,8 @@ export function formatBrl(cents: number): string {
 
 export function parseCents(value: string, allowZero = false): number {
   const compact = value
-    .replace(/^\s*R\$\s*/i, '')
+    .replace(/^\s*r\s*(?:\$|s)\s*/i, '')
+    .replace(/\s*(?:reais?|rs)\s*$/i, '')
     .replace(/\s/g, '')
     .trim();
   if (!compact) throw new Error('Informe um valor valido.');

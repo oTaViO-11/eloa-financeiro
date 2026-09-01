@@ -177,10 +177,28 @@ function cleanMoneyToken(value: string): string {
   return value.replace(/\s+/g, ' ').replace(/[.,;:!?]+$/, '');
 }
 
+function canonicalMoney(value: string): string | undefined {
+  const number = cleanMoneyToken(value)
+    .replace(/^r\s*(?:\$|s)\s*/iu, '')
+    .replace(/\s*(?:reais?|rs)\s*$/iu, '')
+    .trim();
+  return /^\d[\d.,]*$/.test(number) ? `R$ ${number}` : undefined;
+}
+
 function moneyFromText(text: string, label?: RegExp): string | undefined {
   const source = label ? text.match(label)?.[1] : undefined;
-  const fallback = source ?? text.match(/R\$\s*\d[\d.,]*/i)?.[0];
-  return fallback ? cleanMoneyToken(fallback) : undefined;
+  if (source) return canonicalMoney(source);
+
+  const prefixed = text.match(/(?:^|[^\p{L}\d])r\s*(?:\$|s)\s*(\d[\d.,]*)/iu)?.[1];
+  if (prefixed) return canonicalMoney(prefixed);
+
+  const suffixed = text.match(/\b(\d[\d.,]*)\s+(?:reais?|rs)\b/iu)?.[1];
+  if (suffixed) return canonicalMoney(suffixed);
+
+  const paidAmount = text.match(
+    /\b(?:paguei|gastei)\s+(\d[\d.,]*)(?=\s+(?:pelo|pela|por|no|na|em)\b|$)/iu,
+  )?.[1];
+  return paidAmount ? canonicalMoney(paidAmount) : undefined;
 }
 
 function parseDateFromText(text: string, fallback: string): string {
@@ -204,12 +222,31 @@ function paymentMethodFromText(normalized: string): PaymentMethod | undefined {
 
 function cardNameFromText(text: string): string | undefined {
   const match = text.match(/\b(?:no|na|cart[aã]o)\s+([\p{L}][\p{L}\d .-]{1,48}?)(?=\s+(?:em\s+\d{1,2}x|por|de\s+R\$|R\$)|[,.!?]|$)/iu);
-  return cleanText(match?.[1], 80);
+  const cardName = cleanText(match?.[1], 80);
+  if (!cardName || /^(pix|cr[eé]dito|d[eé]bito|dinheiro)(\s|$)/iu.test(cardName)) {
+    return undefined;
+  }
+  return cardName;
 }
 
 function descriptionFromText(text: string): string | undefined {
-  const match = text.match(/\b(?:comprei|paguei|gastei)\s+(.+?)(?=\s+(?:por|de)\s+R\$|\s+R\$|$)/i);
-  return cleanText(match?.[1], 120);
+  const amount = String.raw`(?:r\s*(?:\$|s)\s*)?\d[\d.,]*(?:\s+reais?)?`;
+  const paidFirst = text.match(
+    new RegExp(
+      String.raw`\b(?:paguei|gastei)\s+${amount}\s+(?:pelo|pela|por|no|na|em)\s+(.+?)(?=\s+(?:no|na|com)\s+(?:pix|cr[eé]dito|d[eé]bito|cart[aã]o|dinheiro)|\s+(?:hoje|ontem)\b|[,.!?]|$)`,
+      'iu',
+    ),
+  );
+  const purchaseFirst = text.match(
+    new RegExp(
+      String.raw`\b(?:comprei|paguei|gastei)\s+(.+?)(?=\s+(?:por|de)\s+${amount}|\s+${amount}|$)`,
+      'iu',
+    ),
+  );
+  const question = text.match(
+    new RegExp(String.raw`\b(?:posso comprar|comprar)\s+(.+?)(?=\s+(?:por|de)\s+${amount})`, 'iu'),
+  );
+  return cleanText(paidFirst?.[1] ?? question?.[1] ?? purchaseFirst?.[1], 120);
 }
 
 function merchantFromText(text: string): string | undefined {
@@ -231,9 +268,12 @@ function dayFromText(text: string, kind: 'closing' | 'due'): number | undefined 
 
 function amountAfterKeyword(text: string, keyword: string): string | undefined {
   const match = text.match(
-    new RegExp(`${keyword}[^R\\d]{0,18}(R\\$\\s*\\d[\\d.,]*|\\d[\\d.,]*)`, 'i'),
+    new RegExp(
+      String.raw`\b(?:${keyword})\b[^\d]{0,18}((?:r\s*(?:\$|s)\s*)?\d[\d.,]*(?:\s+reais?)?)`,
+      'iu',
+    ),
   );
-  return match?.[1] ? cleanMoneyToken(match[1]) : undefined;
+  return match?.[1] ? canonicalMoney(match[1]) : undefined;
 }
 
 function fallbackExtract(text: string, today: string): Command {
@@ -414,8 +454,9 @@ async function extractWithAi(text: string, userId: string, fallback: Command): P
         max_output_tokens: 500,
         safety_identifier: await safetyIdentifier(userId),
         instructions:
-          'Extraia fatos de uma mensagem em português do Brasil para um assistente financeiro. ' +
+      'Extraia fatos de uma mensagem em português do Brasil para um assistente financeiro. ' +
           'Nunca invente valores, datas, lojas ou cartões. Datas devem ser YYYY-MM-DD ou null. ' +
+          'Valores em reais podem vir como R$, RS, real ou reais. Interprete "paguei <valor> pelo/pela <produto>" como uma compra. ' +
           'Valores devem manter a forma dita pela pessoa. Retorne somente o objeto solicitado.',
         input: text.slice(0, 2000),
         text: { format: { type: 'json_schema', name: 'finance_command', strict: true, schema } },
