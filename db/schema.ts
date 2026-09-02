@@ -60,6 +60,8 @@ export const purchases = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     description: text('description').notNull(),
+    quantity: integer('quantity'),
+    quantityUnit: text('quantity_unit'),
     merchant: text('merchant'),
     location: text('location'),
     category: text('category').notNull().default('outros'),

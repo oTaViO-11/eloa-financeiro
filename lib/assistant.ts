@@ -16,6 +16,7 @@ import {
   cardOutstandingCents,
   clearSession,
   createPurchase,
+  deactivateCard,
   effectiveMonthlyBudget,
   getCachedReply,
   getCardByName,
@@ -47,6 +48,7 @@ type Intent =
   | 'my_data'
   | 'update_data'
   | 'update_card'
+  | 'delete_card'
   | 'confirm'
   | 'cancel'
   | 'unknown';
@@ -56,6 +58,8 @@ type PaymentMethod = 'credit' | 'debit' | 'pix' | 'cash';
 type Command = {
   intent: Intent;
   description?: string;
+  quantity?: number;
+  quantityUnit?: string;
   amount?: string;
   merchant?: string;
   location?: string;
@@ -83,25 +87,37 @@ type PendingAction = {
 type MessageInput = {
   user: AuthenticatedUser;
   text: string;
+  location?: string;
   source: 'panel' | 'whatsapp';
   messageId: string;
 };
 
 const HELP_TEXT = [
-  'Posso registrar compras, configurar renda e cartões, mostrar seu resumo e analisar se uma compra cabe no crédito.',
+  '✨ COMO POSSO AJUDAR',
   '',
-  'Exemplos:',
-  '• Comprei café por R$ 12,50 na Padaria Central no Pix hoje',
-  '• Minha renda é R$ 5.000 e meu orçamento mensal é R$ 1.500',
-  '• Cartão Nubank, limite R$ 3.000, fecha dia 5 e vence dia 12',
-  '• Ao cadastrar um cartão, eu identifico a bandeira com segurança.',
-  '• Digite MEUS DADOS para ver cartões, limites, gastos e bandeiras.',
-  '• Digite ATUALIZAR DADOS ou “corrigir bandeira do cartão Mercado Pago para Visa”.',
-  '• Para pagar uma fatura: “Paguei R$ 300 da fatura do Nubank”.',
-  '• Posso comprar um notebook de R$ 2.500 no Nubank em 10x?',
-  '• Eu identifico categorias como alimentação, saúde, roupas, transporte e outras.',
+  '🧾 COMPRAS',
+  '• “Comprei 12 bananas por R$ 23 no Pix”',
+  '• “Paguei R$ 40 por uma consulta na UPA no Pix”',
+  '• Para informar o local: use o campo Local (opcional) no painel ou escreva “local: Feira do Centro”.',
+  '• Eu separo produto, quantidade, pagamento, estabelecimento, local e categoria.',
   '',
-  'Antes de gravar algo, eu envio uma prévia para revisão. Responda SIM para salvar, CORRIGIR para ajustar ou CANCELAR para desistir.',
+  '💳 CARTÕES E FATURAS',
+  '• “Cartão Nubank, limite R$ 3.000, fecha dia 5 e vence dia 12”',
+  '• “Paguei R$ 300 da fatura do Nubank”',
+  '• “Posso comprar um notebook de R$ 2.500 no Nubank em 10x?”',
+  '• “Excluir cartão Nubank”',
+  '',
+  '📁 DADOS E CORREÇÕES',
+  '• MEUS DADOS — mostra cartões, bandeiras, limites e gastos.',
+  '• ATUALIZAR DADOS — mostra o que pode ser corrigido.',
+  '• “Corrigir bandeira do cartão Mercado Pago para Visa”.',
+  '• RESUMO ou ÚLTIMAS COMPRAS — acompanha o mês.',
+  '',
+  '🏷️ CATEGORIAS',
+  'Reconheço alimentação, saúde, casa, roupas, transporte, moradia, contas e serviços, tecnologia, educação, lazer, cuidados pessoais, pets, trabalho, assinaturas, presentes, impostos e geral.',
+  '',
+  '✅ REVISÃO',
+  'Nada é salvo sem revisão. Responda SIM para confirmar, CORRIGIR para ajustar ou CANCELAR para desistir.',
 ].join('\n');
 
 const SENSITIVE_WARNING =
@@ -120,6 +136,7 @@ const intents: Intent[] = [
   'my_data',
   'update_data',
   'update_card',
+  'delete_card',
   'confirm',
   'cancel',
   'unknown',
@@ -286,14 +303,53 @@ function amountNearPayment(text: string): string | undefined {
   return amount ? canonicalMoney(amount) : undefined;
 }
 
+const writtenQuantities: Record<string, number> = {
+  um: 1,
+  uma: 1,
+  dois: 2,
+  duas: 2,
+  tres: 3,
+  quatro: 4,
+  cinco: 5,
+  seis: 6,
+  sete: 7,
+  oito: 8,
+  nove: 9,
+  dez: 10,
+  onze: 11,
+  doze: 12,
+  treze: 13,
+  quatorze: 14,
+  catorze: 14,
+  quinze: 15,
+  dezesseis: 16,
+  dezessete: 17,
+  dezoito: 18,
+  dezenove: 19,
+  vinte: 20,
+};
+
+const quantityToken = String.raw`(?:\d{1,4}|um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|quatorze|catorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte)`;
+
+function parseQuantityToken(value: string): number | undefined {
+  const normalized = normalizeText(value);
+  const numeric = Number(normalized);
+  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= 9_999) return numeric;
+  const written = writtenQuantities[normalized];
+  return written && written > 0 ? written : undefined;
+}
+
 function totalFromQuantityAndUnitPrice(text: string): string | undefined {
   const match = text.match(
-    /\b(?:comprei|paguei|gastei)\s+(\d{1,4})\s+(?:[\p{L}][\p{L}\d-]*\s*){1,6}?(?:por|a)\s+((?:r\s*(?:\$|s)\s*)?\d(?:[\d.,]|\s(?=\d))*(?:\s+reais?)?)\s+(?:cada|cada\s+um(?:a)?|a\s+unidade)\b/iu,
+    new RegExp(
+      String.raw`\b(?:comprei|paguei|gastei)\s+(${quantityToken})\s+(?:[\p{L}][\p{L}\d-]*\s*){1,6}?(?:por|a)\s+((?:r\s*(?:\$|s)\s*)?\d(?:[\d.,]|\s(?=\d))*(?:\s+reais?)?)\s+(?:cada|cada\s+um(?:a)?|a\s+unidade)\b`,
+      'iu',
+    ),
   );
   if (!match) return undefined;
-  const quantity = Number(match[1]);
+  const quantity = parseQuantityToken(match[1]);
   const unit = canonicalMoney(match[2]);
-  if (!Number.isSafeInteger(quantity) || quantity < 1 || !unit) return undefined;
+  if (!quantity || !unit) return undefined;
   try {
     return formatBrl(parseCents(unit) * quantity);
   } catch {
@@ -386,6 +442,13 @@ function cardNameFromInvoiceText(text: string): string | undefined {
   return undefined;
 }
 
+function cardNameFromDeletionText(text: string): string | undefined {
+  const match = text.match(
+    /\b(?:excluir|remover|apagar|deletar|tirar)\s+(?:o\s+)?(?:cart[aã]o\s+)?(.+?)(?=\s+(?:da|do|de)\s+(?:lista|painel|cadastro)\b|[,.!?]|$)/iu,
+  );
+  return cleanCardName(match?.[1]);
+}
+
 function cleanPurchaseDescription(value: unknown): string | undefined {
   const description = cleanText(value, 120);
   if (!description) return undefined;
@@ -398,7 +461,76 @@ function cleanPurchaseDescription(value: unknown): string | undefined {
   return cleanText(withoutPayment, 120);
 }
 
-function descriptionFromText(text: string): string | undefined {
+type PurchaseDetails = {
+  description?: string;
+  quantity?: number;
+  quantityUnit?: string;
+};
+
+function normalizedQuantityUnit(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const normalized = normalizeText(value).replace(/\.$/, '');
+  const labels: Record<string, string> = {
+    un: 'un.',
+    und: 'un.',
+    unidade: 'un.',
+    unidades: 'un.',
+    saco: 'sacos',
+    sacos: 'sacos',
+    pacote: 'pacotes',
+    pacotes: 'pacotes',
+    caixa: 'caixas',
+    caixas: 'caixas',
+    garrafa: 'garrafas',
+    garrafas: 'garrafas',
+    lata: 'latas',
+    latas: 'latas',
+    litro: 'litros',
+    litros: 'litros',
+    l: 'litros',
+    quilo: 'kg',
+    quilos: 'kg',
+    kg: 'kg',
+    grama: 'g',
+    gramas: 'g',
+    g: 'g',
+    par: 'pares',
+    pares: 'pares',
+    pote: 'potes',
+    potes: 'potes',
+    frasco: 'frascos',
+    frascos: 'frascos',
+    metro: 'metros',
+    metros: 'metros',
+    m: 'metros',
+  };
+  return labels[normalized];
+}
+
+function purchaseDetailsFromDescription(value: unknown): PurchaseDetails {
+  const cleaned = cleanPurchaseDescription(value);
+  if (!cleaned) return {};
+  const match = cleaned.match(
+    new RegExp(String.raw`^(${quantityToken})\s+(.+)$`, 'iu'),
+  );
+  if (!match) return { description: cleaned };
+  const quantity = parseQuantityToken(match[1]);
+  if (!quantity) return { description: cleaned };
+
+  let remaining = match[2].trim();
+  const unitMatch = remaining.match(
+    /^(un(?:idade|idades)?|und|sacos?|pacotes?|caixas?|garrafas?|latas?|litros?|l|quilos?|kg|gramas?|g|pares?|potes?|frascos?|metros?|m)\b\s*/iu,
+  );
+  const quantityUnit = normalizedQuantityUnit(unitMatch?.[1]);
+  if (unitMatch) remaining = remaining.slice(unitMatch[0].length);
+  remaining = remaining.replace(/^de\s+/iu, '').trim();
+  const description = cleanPurchaseDescription(remaining);
+  return description
+    ? { description, quantity, quantityUnit }
+    : { description: cleaned };
+}
+
+function rawPurchaseDescriptionFromText(text: string): string | undefined {
   const amount = String.raw`(?:\d+\s+reais?\s+e\s+\d{1,2}\s+centavos?|(?:r\s*(?:\$|s)\s*)?\d[\d.,]*(?:\s+reais?)?)`;
   const paidFirst = text.match(
     new RegExp(
@@ -429,6 +561,46 @@ function descriptionFromText(text: string): string | undefined {
   return cleanPurchaseDescription(flexible);
 }
 
+function purchaseDetailsFromText(text: string): PurchaseDetails {
+  const rawDescription = rawPurchaseDescriptionFromText(text);
+  const merchant = merchantFromText(text);
+  if (!rawDescription || !merchant) {
+    return purchaseDetailsFromDescription(rawDescription);
+  }
+  const escapedMerchant = merchant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const productOnly = rawDescription.replace(
+    new RegExp(String.raw`\s+(?:na|no|em)\s+${escapedMerchant}$`, 'iu'),
+    '',
+  );
+  return purchaseDetailsFromDescription(productOnly);
+}
+
+function descriptionFromText(text: string): string | undefined {
+  return purchaseDetailsFromText(text).description;
+}
+
+function cleanPurchaseLocation(value: unknown): string | undefined {
+  const location = cleanText(value, 120)
+    ?.replace(/^(?:local|localizacao|localização)\s*[:=-]\s*/iu, '')
+    .trim();
+  if (
+    !location ||
+    /^(?:nao informado|não informado|desconhecido|local desconhecido|sem local|n\/a|na)$/iu.test(
+      location,
+    )
+  ) {
+    return undefined;
+  }
+  return location;
+}
+
+function locationFromText(text: string): string | undefined {
+  const match = text.match(
+    /\b(?:local|localizacao|localização|lugar)\s*[:=-]\s*(.+?)(?=[.!?]|$)/iu,
+  );
+  return cleanPurchaseLocation(match?.[1]);
+}
+
 function merchantFromText(text: string): string | undefined {
   const match = text.match(
     /\b(?:na|no|em)\s+([\p{L}][\p{L}\d .&'-]{1,70}?)(?=\s+(?:no|na|com|por|de)\s+(?:pix|cr[eé]dito|d[eé]bito|dinheiro|R\$)|[,.!?]|$)/iu,
@@ -436,7 +608,7 @@ function merchantFromText(text: string): string | undefined {
   const merchant = cleanText(match?.[1], 100);
   if (
     !merchant ||
-    /^(pix|cr[eé]dito|d[eé]bito|dinheiro|hoje|ontem)(\s|$)/i.test(merchant)
+    /^(pix|cr[eé]dito|d[eé]bito|dinheiro|cart[aã]o|hoje|ontem)(\s|$)/i.test(merchant)
   ) {
     return undefined;
   }
@@ -485,6 +657,16 @@ function fallbackExtract(text: string, today: string): Command {
   if (/^(confirmar|confirmo)\b/.test(normalized)) return { intent: 'confirm' };
   if (/^(cancelar|cancela|nao|não)\b/.test(normalized))
     return { intent: 'cancel' };
+
+  const isCardDeletion =
+    /\b(?:excluir|remover|apagar|deletar|tirar)\b/.test(normalized) &&
+    /\b(?:cartao|card)\b/.test(normalized);
+  if (isCardDeletion) {
+    return {
+      intent: 'delete_card',
+      cardName: cardNameFromDeletionText(corrected),
+    };
+  }
 
   const isInvoicePayment =
     /\b(?:pagar|paguei|quitar|quitei)\b/.test(normalized) &&
@@ -570,9 +752,11 @@ function fallbackExtract(text: string, today: string): Command {
       purchaseDate: date,
     };
   }
-  const description = descriptionFromText(corrected);
+  const purchaseDetails = purchaseDetailsFromText(corrected);
+  const description = purchaseDetails.description;
   const merchant = merchantFromText(corrected);
-  const categorySource = `${description ?? ''} ${merchant ?? ''}`.trim() || corrected;
+  const location = locationFromText(corrected);
+  const categorySource = `${description ?? ''} ${merchant ?? ''} ${location ?? ''}`.trim() || corrected;
   const hasPurchaseVerb = /\b(comprei|paguei|gastei)\b/.test(normalized);
   const inferredPurchase = Boolean(
     amount &&
@@ -584,7 +768,10 @@ function fallbackExtract(text: string, today: string): Command {
       intent: 'record_purchase',
       amount,
       description,
+      quantity: purchaseDetails.quantity,
+      quantityUnit: purchaseDetails.quantityUnit,
       merchant,
+      location,
       category: classifyPurchaseCategory(categorySource),
       paymentMethod,
       installments: paymentMethod === 'credit' ? installments || 1 : 1,
@@ -643,12 +830,20 @@ function commandFromUnknown(value: unknown): Command | null {
       : undefined;
   };
   const installments = Number(item.installments);
+  const details = purchaseDetailsFromDescription(item.description);
+  const quantity = Number(item.quantity);
+  const quantityUnit = normalizedQuantityUnit(cleanText(item.quantityUnit, 40));
   return {
     intent,
-    description: cleanPurchaseDescription(item.description),
+    description: details.description,
+    quantity:
+      Number.isInteger(quantity) && quantity >= 1 && quantity <= 9_999
+        ? quantity
+        : details.quantity,
+    quantityUnit: quantityUnit ?? details.quantityUnit,
     amount: cleanText(item.amount, 64),
     merchant: cleanText(item.merchant),
-    location: cleanText(item.location),
+    location: cleanPurchaseLocation(item.location),
     category: normalizePurchaseCategory(item.category),
     paymentMethod,
     installments:
@@ -696,6 +891,7 @@ function isNewFinancialAction(intent: Intent): boolean {
     'analyze_credit',
     'record_card_payment',
     'update_card',
+    'delete_card',
   ].includes(intent);
 }
 
@@ -711,6 +907,10 @@ function mergeExtraction(fallback: Command, extracted: Command): Command {
   if (fallback.category && fallback.category !== 'geral') {
     merged.category = fallback.category;
   }
+  if (fallback.description) merged.description = fallback.description;
+  if (fallback.quantity) merged.quantity = fallback.quantity;
+  if (fallback.quantityUnit) merged.quantityUnit = fallback.quantityUnit;
+  if (fallback.location) merged.location = fallback.location;
   if (fallback.paymentMethod && fallback.paymentMethod !== 'credit') {
     merged.cardName = undefined;
     merged.installments = 1;
@@ -741,6 +941,8 @@ async function extractWithAi(
     required: [
       'intent',
       'description',
+      'quantity',
+      'quantityUnit',
       'amount',
       'merchant',
       'location',
@@ -761,6 +963,8 @@ async function extractWithAi(
     properties: {
       intent: { type: 'string', enum: intents },
       description: { type: ['string', 'null'] },
+      quantity: { type: ['integer', 'null'] },
+      quantityUnit: { type: ['string', 'null'] },
       amount: { type: ['string', 'null'] },
       merchant: { type: ['string', 'null'] },
       location: { type: ['string', 'null'] },
@@ -803,9 +1007,12 @@ async function extractWithAi(
           '“Cartão de crédito Mercado Pago” significa paymentMethod credit e cardName Mercado Pago. ' +
           'Os comandos “meus dados” e “atualizar dados” usam os intents my_data e update_data. ' +
           'Para “corrigir bandeira do cartão Mercado Pago para Visa”, use update_card, cardName Mercado Pago e cardBrand visa. ' +
+          'Para “excluir cartão Nubank”, use delete_card e cardName Nubank. ' +
           'Para “paguei R$ 300 da fatura do Nubank”, use record_card_payment, cardName Nubank e amount R$ 300; isso nunca é uma compra nova. ' +
           'Se a pessoa informar uma bandeira de cartão, use cardBrand; não invente uma bandeira ausente. ' +
-          'Classifique compras em alimentação, saúde, roupas, transporte, moradia, educação, lazer, cuidados pessoais, pets ou geral. ' +
+          'Para compras, description deve conter apenas o produto, sem quantidade, preço, forma de pagamento, estabelecimento ou local. quantity e quantityUnit são campos separados e só devem ser preenchidos quando a pessoa informou uma quantidade. ' +
+          'Só use location quando a pessoa informou explicitamente o local; nunca use “desconhecido” ou “não informado”. merchant é o estabelecimento, não o local. ' +
+          'Classifique compras em alimentação, saúde, casa, roupas, transporte, moradia, contas e serviços, tecnologia, educação, lazer, cuidados pessoais, pets, assinaturas, trabalho, presentes e doações, impostos e taxas ou geral. ' +
           'Valores devem manter a forma dita pela pessoa. Retorne somente o objeto solicitado.',
         input: text.slice(0, 2000),
         text: {
@@ -856,6 +1063,9 @@ function missingFields(command: Command): string[] {
       !hasChange && 'dado a corrigir',
     ].filter(Boolean) as string[];
   }
+  if (command.intent === 'delete_card') {
+    return !command.cardName ? ['nome do cartão'] : [];
+  }
   if (command.intent === 'record_card_payment') {
     return [
       !command.amount && 'valor do pagamento',
@@ -864,6 +1074,7 @@ function missingFields(command: Command): string[] {
   }
   if (command.intent === 'record_purchase') {
     const fields = [
+      !command.description && 'produto',
       !command.amount && 'valor',
       !command.paymentMethod && 'forma de pagamento',
       !command.purchaseDate && 'data',
@@ -889,6 +1100,7 @@ function missingFields(command: Command): string[] {
 
 function questionFor(field: string): string {
   const questions: Record<string, string> = {
+    produto: 'Qual foi o produto ou serviço comprado? Ex.: bananas ou consulta médica.',
     valor: 'Qual foi o valor? Ex.: R$ 42,90.',
     'valor do pagamento': 'Qual foi o valor pago na fatura? Ex.: R$ 250,00.',
     'forma de pagamento': 'Como pagou: crédito, débito, Pix ou dinheiro?',
@@ -924,13 +1136,17 @@ function preview(command: Command): string {
   if (command.intent === 'record_purchase') {
     const lines = [
       '🧾 Prévia da compra:',
-      `• Compra: ${command.description ?? command.merchant ?? 'Compra'}`,
+      `• Produto: ${command.description ?? 'Compra'}`,
       `• Valor: ${formatBrl(parseCents(command.amount ?? ''))}`,
       `• Pagamento: ${labelPayment(command.paymentMethod)}`,
       `• Categoria: ${purchaseCategoryLabel(command.category, command.description ?? command.merchant ?? '')}`,
       `• Data: ${command.purchaseDate}`,
     ];
-    if (command.merchant) lines.push(`• Local: ${command.merchant}`);
+    if (command.quantity) {
+      lines.splice(2, 0, `• Quantidade: ${command.quantity}${command.quantityUnit ? ` ${command.quantityUnit}` : ' un.'}`);
+    }
+    if (command.merchant) lines.push(`• Estabelecimento: ${command.merchant}`);
+    if (command.location) lines.push(`• Local: ${command.location}`);
     if (command.paymentMethod === 'credit') {
       lines.push(
         `• Cartão: ${command.cardName}`,
@@ -976,6 +1192,16 @@ function preview(command: Command): string {
       ...changes,
       '',
       ...REVIEW_INSTRUCTIONS,
+    ].join('\n');
+  }
+  if (command.intent === 'delete_card') {
+    return [
+      '🗑️ Revisão da exclusão do cartão:',
+      `• Cartão: ${command.cardName}`,
+      '• As compras anteriores serão preservadas no seu histórico.',
+      '• Não excluo cartões com fatura em aberto.',
+      '',
+      'Para remover o cartão da sua lista, responda SIM. Para desistir, responda CANCELAR.',
     ].join('\n');
   }
   const values = [
@@ -1052,6 +1278,9 @@ function followUpDetails(
     ? Number(corrected.trim())
     : undefined;
   const pendingFields = missingFields(pending);
+  const purchaseDetails = pendingFields.includes('produto')
+    ? purchaseDetailsFromText(corrected)
+    : {};
   const inferredCardName = pendingFields.includes('nome do cartão') || pendingFields.includes('cartão')
     ? cardNameFromCorrectionText(corrected) ??
       cardNameFromText(corrected) ??
@@ -1063,6 +1292,9 @@ function followUpDetails(
       moneyFromText(corrected) ??
       amountAfterKeyword(corrected, 'valor|paguei|quitei') ??
       undefined,
+    description: purchaseDetails.description,
+    quantity: purchaseDetails.quantity,
+    quantityUnit: purchaseDetails.quantityUnit,
     paymentMethod: paymentMethodFromText(normalized),
     installments:
       Number.isInteger(installments) && installments >= 1 && installments <= 48
@@ -1104,6 +1336,7 @@ function hasCompleteNewAction(command: Command): boolean {
   }
   if (command.intent === 'record_purchase') {
     return Boolean(
+      command.description &&
       command.amount &&
         command.paymentMethod &&
         (command.paymentMethod !== 'credit' || command.cardName),
@@ -1114,6 +1347,9 @@ function hasCompleteNewAction(command: Command): boolean {
   }
   if (command.intent === 'record_card_payment') {
     return Boolean(command.amount && command.cardName);
+  }
+  if (command.intent === 'delete_card') {
+    return Boolean(command.cardName);
   }
   if (command.intent === 'update_card') {
     return Boolean(
@@ -1170,6 +1406,17 @@ async function commit(
     if (!updated) return 'Não consegui atualizar esse cartão agora.';
     return `✅ Dados do cartão ${updated.name} atualizados. Bandeira: ${cardBrandLabel(updated.brand)}.`;
   }
+  if (command.intent === 'delete_card') {
+    const card = await getCardByName(userId, command.cardName ?? '');
+    if (!card) return 'Não encontrei esse cartão. Digite MEUS DADOS para conferir o nome salvo.';
+    const result = await deactivateCard(userId, card.id);
+    if (result.outstandingCents > 0) {
+      return `Não posso excluir ${card.name} porque há ${formatBrl(result.outstandingCents)} em fatura aberta. Registre o pagamento da fatura e tente novamente.`;
+    }
+    return result.deactivated
+      ? `✅ Cartão ${card.name} removido da sua lista. Suas compras anteriores foram preservadas.`
+      : 'Não consegui excluir esse cartão agora.';
+  }
   if (command.intent === 'record_card_payment') {
     const card = await getCardByName(userId, command.cardName ?? '');
     if (!card)
@@ -1208,14 +1455,16 @@ async function commit(
         }),
       );
     }
-    const description = command.description ?? command.merchant ?? 'Compra';
+    const description = command.description ?? 'Compra';
     const result = await createPurchase(userId, {
       description,
+      quantity: command.quantity,
+      quantityUnit: command.quantityUnit,
       merchant: command.merchant,
       location: command.location,
       category:
         normalizePurchaseCategory(command.category) ??
-        classifyPurchaseCategory(`${description} ${command.merchant ?? ''}`),
+        classifyPurchaseCategory(`${description} ${command.merchant ?? ''} ${command.location ?? ''}`),
       totalCents,
       paymentMethod: command.paymentMethod ?? 'pix',
       installmentsCount: command.installments ?? 1,
@@ -1365,7 +1614,8 @@ async function myData(userId: string, includeEditingHelp = false): Promise<strin
       '',
       'Para corrigir, envie uma frase como:',
       '“Corrigir bandeira do cartão Mercado Pago para Visa”.',
-      'Você também pode corrigir limite, fechamento ou vencimento. Eu mostro uma revisão antes de salvar.',
+      'Você também pode corrigir limite, fechamento ou vencimento.',
+      'Para remover um cartão da lista: “Excluir cartão Mercado Pago”. Eu sempre mostro uma revisão antes de qualquer alteração.',
     );
   }
   return lines.join('\n');
@@ -1379,8 +1629,13 @@ async function recentPurchases(userId: string): Promise<string> {
     ...purchases.map((purchase) => {
       const details = [
         `${purchase.description} — ${formatBrl(purchase.totalCents)}`,
+        purchase.quantity
+          ? `quantidade ${purchase.quantity}${purchase.quantityUnit ? ` ${purchase.quantityUnit}` : ' un.'}`
+          : null,
         labelPayment(purchase.paymentMethod as PaymentMethod | undefined),
         purchase.cardName,
+        purchase.merchant ? `estabelecimento ${purchase.merchant}` : null,
+        purchase.location ? `local ${purchase.location}` : null,
         purchase.purchasedAt.split('-').reverse().join('/'),
       ].filter(Boolean);
       return `• ${details.join(' · ')}`;
@@ -1499,6 +1754,10 @@ export async function processFinanceMessage(
   const command = pendingCommand && !startsNewAction
     ? mergeCommand(pendingCommand, followUpDetails(text, pendingCommand))
     : extracted;
+  const providedLocation = cleanPurchaseLocation(input.location);
+  if (providedLocation && command.intent === 'record_purchase') {
+    command.location = providedLocation;
+  }
 
   if (isInformationalIntent(command.intent))
     return finish(input, await informationalReply(input.user.id, command.intent));
@@ -1522,7 +1781,7 @@ export async function processFinanceMessage(
   }
   if (
     command.cardName &&
-    ['record_purchase', 'record_card_payment', 'update_card', 'analyze_credit'].includes(
+    ['record_purchase', 'record_card_payment', 'update_card', 'delete_card', 'analyze_credit'].includes(
       command.intent,
     )
   ) {

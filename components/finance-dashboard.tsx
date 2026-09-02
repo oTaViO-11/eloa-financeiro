@@ -49,7 +49,10 @@ type CardItem = {
 type Purchase = {
   id: string;
   description: string;
+  quantity: number | null;
+  quantityUnit: string | null;
   merchant: string | null;
+  location: string | null;
   category: string;
   totalCents: number;
   paymentMethod: string;
@@ -99,6 +102,30 @@ function paymentLabel(method: string): string {
   return labels[method] ?? method;
 }
 
+const categoryTone: Record<string, string> = {
+  alimentacao: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100',
+  saude: 'bg-rose-50 text-rose-700 ring-1 ring-rose-100',
+  casa: 'bg-orange-50 text-orange-700 ring-1 ring-orange-100',
+  roupas: 'bg-fuchsia-50 text-fuchsia-700 ring-1 ring-fuchsia-100',
+  transporte: 'bg-sky-50 text-sky-700 ring-1 ring-sky-100',
+  moradia: 'bg-amber-50 text-amber-800 ring-1 ring-amber-100',
+  contas_servicos: 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-100',
+  educacao: 'bg-violet-50 text-violet-700 ring-1 ring-violet-100',
+  lazer: 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100',
+  cuidados_pessoais: 'bg-pink-50 text-pink-700 ring-1 ring-pink-100',
+  pets: 'bg-yellow-50 text-yellow-800 ring-1 ring-yellow-100',
+  tecnologia: 'bg-blue-50 text-blue-700 ring-1 ring-blue-100',
+  assinaturas: 'bg-purple-50 text-purple-700 ring-1 ring-purple-100',
+  trabalho: 'bg-slate-100 text-slate-700 ring-1 ring-slate-200',
+  presentes_doacoes: 'bg-red-50 text-red-700 ring-1 ring-red-100',
+  impostos_taxas: 'bg-stone-100 text-stone-700 ring-1 ring-stone-200',
+  geral: 'bg-[#fff3df] text-[#87591d] ring-1 ring-[#f5deb6]',
+};
+
+function categoryToneFor(category: string): string {
+  return categoryTone[category] ?? categoryTone.geral;
+}
+
 function purchaseDescriptionWithoutPayment(description: string): string {
   const cleaned = description
     .replace(
@@ -136,6 +163,7 @@ async function readJson<T>(response: Response): Promise<T> {
 export function FinanceDashboard({ displayName }: { displayName: string }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [message, setMessage] = useState('');
+  const [purchaseLocation, setPurchaseLocation] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -201,9 +229,13 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const content = message.trim();
+    const location = purchaseLocation.trim();
     if (!content || sending) return;
     const messageId = safeId();
     const createdAt = new Date().toISOString();
+    const visibleContent = location
+      ? `${content}\nLocal: ${location}`
+      : content;
     shouldStickToBottomRef.current = true;
     setMessage('');
     setSending(true);
@@ -217,7 +249,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
               {
                 id: `${messageId}-user`,
                 role: 'user',
-                content,
+                content: visibleContent,
                 source: 'panel',
                 createdAt,
               },
@@ -230,7 +262,11 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
         await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: content, messageId }),
+          body: JSON.stringify({
+            message: visibleContent,
+            location: location || undefined,
+            messageId,
+          }),
         }),
       );
       setData((current) =>
@@ -250,6 +286,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
             }
           : current,
       );
+      setPurchaseLocation('');
       void loadDashboard();
     } catch (error) {
       setNotice(
@@ -426,7 +463,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
               <div
                 ref={messageListRef}
                 onScroll={handleMessageScroll}
-                className="max-h-[430px] min-h-[280px] space-y-3 overflow-y-auto overscroll-contain bg-[#fafcf9] p-5 [overflow-anchor:none]"
+                className="max-h-[min(430px,55dvh)] min-h-[280px] space-y-3 overflow-y-auto overscroll-contain bg-[#fafcf9] p-5 [overflow-anchor:none]"
                 aria-live="polite"
               >
                 {initialLoading && (
@@ -456,32 +493,52 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                 <label htmlFor="finance-message" className="sr-only">
                   Mensagem para Eloá
                 </label>
-                <div className="flex items-end gap-3">
-                  <textarea
-                    id="finance-message"
-                    ref={messageInputRef}
-                    value={message}
-                    onChange={(event) => setMessage(event.target.value)}
-                    placeholder="Ex.: Comprei mercado por R$ 85 no Pix"
-                    maxLength={2000}
-                    rows={2}
-                    className="min-h-12 flex-1 resize-none rounded-xl border border-[#cfdad1] bg-[#fcfdfb] px-3 py-2.5 text-sm text-[#143b32] outline-none transition focus:border-[#174f40] focus:ring-2 focus:ring-[#174f40]/15"
-                  />
-                  <Button
-                    type="submit"
-                    disabled={!message.trim() || sending}
-                    className="h-11 rounded-xl bg-[#174f40] px-4 text-white hover:bg-[#123f33]"
-                  >
-                    <Send size={16} />
-                    <span className="sr-only sm:not-sr-only sm:ml-1">
-                      Enviar
-                    </span>
-                  </Button>
+                <div className="space-y-2">
+                  <div className="flex items-end gap-3">
+                    <textarea
+                      id="finance-message"
+                      ref={messageInputRef}
+                      value={message}
+                      onChange={(event) => setMessage(event.target.value)}
+                      placeholder="Ex.: Comprei mercado por R$ 85 no Pix"
+                      maxLength={2000}
+                      rows={2}
+                      className="min-h-12 flex-1 resize-none rounded-xl border border-[#cfdad1] bg-[#fcfdfb] px-3 py-2.5 text-sm text-[#143b32] outline-none transition focus:border-[#174f40] focus:ring-2 focus:ring-[#174f40]/15"
+                    />
+                    <Button
+                      type="submit"
+                      disabled={!message.trim() || sending}
+                      className="h-11 rounded-xl bg-[#174f40] px-4 text-white hover:bg-[#123f33]"
+                    >
+                      <Send size={16} />
+                      <span className="sr-only sm:not-sr-only sm:ml-1">
+                        Enviar
+                      </span>
+                    </Button>
+                  </div>
+                  <div className="grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                    <label htmlFor="purchase-location" className="sr-only">
+                      Local da compra, opcional
+                    </label>
+                    <input
+                      id="purchase-location"
+                      value={purchaseLocation}
+                      onChange={(event) => setPurchaseLocation(event.target.value)}
+                      placeholder="Local da compra (opcional): ex. Feira do Centro"
+                      maxLength={120}
+                      className="h-10 w-full rounded-xl border border-[#d9e0d4] bg-[#fcfdfb] px-3 text-sm text-[#143b32] outline-none transition focus:border-[#174f40] focus:ring-2 focus:ring-[#174f40]/15"
+                    />
+                    <p className="text-xs leading-5 text-[#668078] sm:text-right">
+                      Se não informar, o local não aparece no relatório.
+                    </p>
+                  </div>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
+                    'Ajuda',
                     'Meus dados',
                     'Atualizar dados',
+                    'Excluir cartão',
                     'Minha renda é R$ 2.500 e orçamento R$ 700',
                     'Cartão Nubank, limite R$ 1.500, fecha dia 5 e vence dia 12',
                     'Posso comprar algo de R$ 300 no crédito?',
@@ -629,16 +686,31 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                           ? ` · ${purchase.cardName}`
                           : ''}
                       </span>
-                      <span className="rounded-full bg-[#fff3df] px-2 py-0.5 font-semibold text-[#87591d]">
+                      <span
+                        className={`rounded-full px-2 py-0.5 font-semibold ${categoryToneFor(purchase.category)}`}
+                      >
                         Categoria:{' '}
                         {purchaseCategoryLabel(
                           purchase.category,
                           purchase.description,
                         )}
                       </span>
+                      {purchase.quantity && (
+                        <span className="rounded-full bg-[#edf1ee] px-2 py-0.5 font-semibold text-[#47645c]">
+                          Quantidade: {purchase.quantity}
+                          {purchase.quantityUnit
+                            ? ` ${purchase.quantityUnit}`
+                            : ' un.'}
+                        </span>
+                      )}
                       {purchase.merchant && (
                         <span className="text-[#668078]">
-                          Local: {purchase.merchant}
+                          Estabelecimento: {purchase.merchant}
+                        </span>
+                      )}
+                      {purchase.location && (
+                        <span className="text-[#668078]">
+                          Local: {purchase.location}
                         </span>
                       )}
                       <span className="text-[#668078]">

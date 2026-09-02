@@ -35,6 +35,8 @@ export type Card = {
 export type Purchase = {
   id: string;
   description: string;
+  quantity: number | null;
+  quantityUnit: string | null;
   merchant: string | null;
   location: string | null;
   category: string;
@@ -103,6 +105,12 @@ function purchaseFromRow(row: Row): Purchase {
   return {
     id: String(row.id),
     description: String(row.description),
+    quantity:
+      typeof row.quantity === 'number' || typeof row.quantity === 'string'
+        ? asNumber(row.quantity)
+        : null,
+    quantityUnit:
+      typeof row.quantity_unit === 'string' ? row.quantity_unit : null,
     merchant: row.merchant ? String(row.merchant) : null,
     location: row.location ? String(row.location) : null,
     category: String(row.category),
@@ -401,10 +409,36 @@ export async function updateCard(
   return getCardById(userId, cardId);
 }
 
+export async function deactivateCard(
+  userId: string,
+  cardId: string,
+): Promise<{ deactivated: boolean; outstandingCents: number }> {
+  const card = await getCardById(userId, cardId);
+  if (!card) return { deactivated: false, outstandingCents: 0 };
+  const outstandingCents = await cardOutstandingCents(userId, cardId);
+  if (outstandingCents > 0) return { deactivated: false, outstandingCents };
+
+  const db = getDatabase();
+  const result = await db
+    .prepare(
+      `UPDATE cards
+       SET active = 0, updated_at = ?
+       WHERE id = ? AND user_id = ? AND active = 1`,
+    )
+    .bind(now(), cardId, userId)
+    .run();
+  return {
+    deactivated: asNumber(result.meta.changes) > 0,
+    outstandingCents: 0,
+  };
+}
+
 export async function createPurchase(
   userId: string,
   input: {
     description: string;
+    quantity?: number | null;
+    quantityUnit?: string | null;
     merchant?: string | null;
     location?: string | null;
     category?: string | null;
@@ -431,15 +465,19 @@ export async function createPurchase(
     db
       .prepare(
         `INSERT INTO purchases (
-          id, user_id, description, merchant, location, category, total_cents,
+          id, user_id, description, quantity, quantity_unit, merchant, location, category, total_cents,
           payment_method, installments_count, card_id, purchased_at, source,
           idempotency_key, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         purchaseId,
         userId,
         input.description.slice(0, 160),
+        input.quantity && Number.isInteger(input.quantity) && input.quantity > 0
+          ? input.quantity
+          : null,
+        input.quantityUnit?.slice(0, 40) ?? null,
         input.merchant?.slice(0, 120) ?? null,
         input.location?.slice(0, 120) ?? null,
         input.category?.slice(0, 80) ?? 'outros',

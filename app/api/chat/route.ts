@@ -11,8 +11,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = (await request.json()) as { message?: unknown; messageId?: unknown };
+    const body = (await request.json()) as {
+      message?: unknown;
+      location?: unknown;
+      messageId?: unknown;
+    };
     const message = typeof body.message === 'string' ? body.message.trim() : '';
+    const location =
+      typeof body.location === 'string' ? body.location.trim().slice(0, 120) : undefined;
     if (!message || message.length > 2_000) {
       return Response.json({ error: 'Envie uma mensagem de até 2.000 caracteres.' }, { status: 400 });
     }
@@ -25,6 +31,7 @@ export async function POST(request: Request) {
     const reply = await processFinanceMessage({
       user: authenticatedUser,
       text: message,
+      location,
       source: 'panel',
       messageId,
     });
