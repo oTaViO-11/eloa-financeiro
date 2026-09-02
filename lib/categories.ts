@@ -42,9 +42,17 @@ const labels: Record<SpendingCategory, string> = {
   geral: 'Geral',
 };
 
+const foodPattern = new RegExp(
+  String.raw`\b(?:alimentos?|alimenticios?|comidas?|refeic(?:ao|oes)|almoc(?:o|os|ar)|jant(?:ar|ares)|cafe(?:\s+da\s+manha)?|lanche(?:s)?|marmitas?|merenda|sobremesas?|mercado|supermercado|feira|hortifruti|sacolao|mercearia|padaria|confeitaria|restaurante|pizzaria|lanchonete|hamburgueria|cafeteria|sorveteria|acougue|ifood|i\s*food|rappi|uber\s*eats|assai|atacadao|carrefour|extra|pa[oa]\s+de\s+acucar|arroz|feij(?:ao|oes)|macarr(?:ao|oes)|miojo|massa(?:s)?|lasanha|farinha|tapioca|cuscuz|aveia|granola|cereal|carne(?:s)?|bife(?:s)?|file(?:s)?|picanha|frango(?:s)?|peixe(?:s)?|camarao|linguica|salsicha|bacon|ovo(?:s)?|pa(?:o|es)|bolo(?:s)?|biscoit(?:o|os)|bolacha(?:s)?|salgad(?:o|os)|pastel(?:is)?|coxinha(?:s)?|pizza(?:s)?|hamburguer(?:es)?|amburguer(?:es)?|sanduiche(?:s)?|hot\s*dog|cachorro\s*quente|acai|sushi|temaki|leite|queijo(?:s)?|parmesao|iogurte(?:s)?|manteiga|requeijao|creme\s+de\s+leite|fruta(?:s)?|banana(?:s)?|maca(?:s)?|laranja(?:s)?|uva(?:s)?|morango(?:s)?|manga(?:s)?|mamao|abacaxi|melancia|melao|limao|pera(?:s)?|abacate|goiaba|tangerina|mexerica|kiwi|ameixa|maracuja|coco|tomate(?:s)?|batata(?:s)?|cebola(?:s)?|alho|cenoura(?:s)?|abobora|mandioca|macaxeira|aipim|inhame|beterraba|alface|couve|repolho|espinafre|pepino|pimentao|verdura(?:s)?|legume(?:s)?|salada(?:s)?|brocolis|milho|chocolate(?:s)?|doce(?:s)?|bala(?:s)?|sorvete(?:s)?|pipoca|mussarela|mozarela|suco(?:s)?|refrigerante(?:s)?|coca\s*cola|pepsi|guarana|cerveja(?:s)?|vinho(?:s)?|cha(?:s)?|energetic(?:o|os)|milk\s*shake|mil+k?shake|milcheik|agua\s+(?:mineral|com\s+gas)|bebida(?:s)?|drink(?:s)?)\b`,
+  'u',
+);
+
 const categoryRules: Array<[SpendingCategory, RegExp]> = [
   ['saude', /\b(?:upa|consulta|medicamentos?|remedios?|remedio|hospital|clinica|exame|farmacia|farmcia|drogaria|vacina|dentista|terapia|psicolog[oa]|plano de saude|laboratorio|cirurgia|oculos|optica)\b/],
-  ['alimentacao', /\b(?:mercado|mercdo|supermercado|feira|padaria|restaurante|lanches?|milk\s*shake|mil+k?shake|milcheik|cafe|comidas?|almocos?|jantares?|bebidas?|aguas?|sucos?|refrigerantes?|cervejas?|vinhos?|bananas?|frutas?|arroz|feijao|carnes?|leite|pizzas?|hamburgueres?|acai|sushi|doces?|sorvetes?|ifood|delivery|lanchonete)\b/],
+  ['contas_servicos', /\b(?:conta\s+(?:de\s+)?agua|agua\s+(?:encanada|da\s+companhia))\b/],
+  ['casa', /\b(?:agua\s+sanitaria|desinfetante|detergente|sabao)\b/],
+  ['pets', /\b(?:pet|racao|veterinario|veterinaria|animais?|cachorro|gato)\b/],
+  ['alimentacao', foodPattern],
   ['casa', /\b(?:movel|moveis|mobilia|sofa|cama|mesa|cadeira|armario|estante|colchao|tapete|cortina|decoracao|utensilios?|panela|prato|talher|geladeira|fogao|forno|microondas|maquina de lavar|lavadora|secadora|aspirador|ventilador|ar condicionado|eletrodomesticos?)\b/],
   ['roupas', /\b(?:roupa|camisa|camiseta|blusa|calca|bermuda|short|vestido|sapato|tenis|chinelo|sandalia|bolsa|mochila|moda)\b/],
   ['transporte', /\b(?:uber|99|taxi|gasolina|combustivel|onibus|passagem|estacionamento|metro|transporte|lavagem do carro|oficina|mecanico|pedagio)\b/],
@@ -55,14 +63,16 @@ const categoryRules: Array<[SpendingCategory, RegExp]> = [
   ['assinaturas', /\b(?:assinatura|streaming|netflix|spotify|prime video|disney|hbo|youtube premium|icloud|google one)\b/],
   ['lazer', /\b(?:cinema|show|viagem|jogo|teatro|bar|balada|passeio|parque|evento)\b/],
   ['cuidados_pessoais', /\b(?:salao|barbearia|maquiagem|perfume|cosmetico|manicure|shampoo|beleza|skin care|skincare)\b/],
-  ['pets', /\b(?:pet|racao|veterinario|veterinaria|animais?|cachorro|gato)\b/],
   ['trabalho', /\b(?:trabalho|coworking|ferramenta|equipamento profissional|material de trabalho|uniforme)\b/],
   ['presentes_doacoes', /\b(?:presente|doacao|doar|contribuicao|vaquinha|caridade)\b/],
   ['impostos_taxas', /\b(?:imposto|iptu|ipva|taxa|multa|darf|licenciamento)\b/],
 ];
 
 export function classifyPurchaseCategory(value: string): SpendingCategory {
-  const normalized = normalizeText(value);
+  const normalized = normalizeText(value)
+    .replace(/\bmercado\s+(?:pago|livre)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   return categoryRules.find(([, pattern]) => pattern.test(normalized))?.[0] ?? 'geral';
 }
 

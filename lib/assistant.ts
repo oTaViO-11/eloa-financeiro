@@ -575,6 +575,16 @@ function purchaseDetailsFromText(text: string): PurchaseDetails {
   return purchaseDetailsFromDescription(productOnly);
 }
 
+function categoryFromPurchaseDetails(
+  description: string | undefined,
+  merchant: string | undefined,
+) {
+  const categoryFromDescription = classifyPurchaseCategory(description ?? '');
+  return categoryFromDescription !== 'geral'
+    ? categoryFromDescription
+    : classifyPurchaseCategory(merchant ?? '');
+}
+
 function descriptionFromText(text: string): string | undefined {
   return purchaseDetailsFromText(text).description;
 }
@@ -650,7 +660,12 @@ function fallbackExtract(text: string, today: string): Command {
     return { intent: 'monthly_summary' };
   if (/^(?:meus?\s+dad+os?|ver\s+(?:meus?\s+)?dad+os?|dados\s+(?:salvos|cadastrados)|minhas?\s+informacoes|(?:quais|ver)\s+(?:meus?\s+)?cartoes)\b/.test(normalized))
     return { intent: 'my_data' };
-  if (/^(?:atualizar|atualiza|editar|corrigir|corrige|alterar|mudar|quero\s+(?:mudar|alterar|atualizar))\s+(?:os?\s+)?(?:meus?\s+)?dados\b/.test(normalized))
+  if (
+    /^(?:atualizar|atualiza|editar|corrigir|corrige|alterar|mudar|quero\s+(?:mudar|alterar|atualizar))\s+(?:os?\s+)?(?:meus?\s+)?dados\b/.test(
+      normalized,
+    ) &&
+    !/\b(?:cartao|bandeira|limite|fechamento|vencimento)\b/.test(normalized)
+  )
     return { intent: 'update_data' };
   if (/\b(ultimas compras|minhas compras|listar compras)\b/.test(normalized))
     return { intent: 'list_purchases' };
@@ -756,7 +771,7 @@ function fallbackExtract(text: string, today: string): Command {
   const description = purchaseDetails.description;
   const merchant = merchantFromText(corrected);
   const location = locationFromText(corrected);
-  const categorySource = `${description ?? ''} ${merchant ?? ''} ${location ?? ''}`.trim() || corrected;
+  const category = categoryFromPurchaseDetails(description, merchant);
   const hasPurchaseVerb = /\b(comprei|paguei|gastei)\b/.test(normalized);
   const inferredPurchase = Boolean(
     amount &&
@@ -772,7 +787,7 @@ function fallbackExtract(text: string, today: string): Command {
       quantityUnit: purchaseDetails.quantityUnit,
       merchant,
       location,
-      category: classifyPurchaseCategory(categorySource),
+      category,
       paymentMethod,
       installments: paymentMethod === 'credit' ? installments || 1 : 1,
       cardName: paymentMethod === 'credit' ? cardName : undefined,
@@ -1010,6 +1025,7 @@ async function extractWithAi(
           'Para “excluir cartão Nubank”, use delete_card e cardName Nubank. ' +
           'Para “paguei R$ 300 da fatura do Nubank”, use record_card_payment, cardName Nubank e amount R$ 300; isso nunca é uma compra nova. ' +
           'Se a pessoa informar uma bandeira de cartão, use cardBrand; não invente uma bandeira ausente. ' +
+          'Qualquer alimento, bebida ou refeição deve usar a categoria alimentacao, mesmo com variações de escrita. ' +
           'Para compras, description deve conter apenas o produto, sem quantidade, preço, forma de pagamento, estabelecimento ou local. quantity e quantityUnit são campos separados e só devem ser preenchidos quando a pessoa informou uma quantidade. ' +
           'Só use location quando a pessoa informou explicitamente o local; nunca use “desconhecido” ou “não informado”. merchant é o estabelecimento, não o local. ' +
           'Classifique compras em alimentação, saúde, casa, roupas, transporte, moradia, contas e serviços, tecnologia, educação, lazer, cuidados pessoais, pets, assinaturas, trabalho, presentes e doações, impostos e taxas ou geral. ' +
@@ -1456,6 +1472,11 @@ async function commit(
       );
     }
     const description = command.description ?? 'Compra';
+    const automaticCategory = categoryFromPurchaseDetails(
+      description,
+      command.merchant,
+    );
+    const requestedCategory = normalizePurchaseCategory(command.category);
     const result = await createPurchase(userId, {
       description,
       quantity: command.quantity,
@@ -1463,8 +1484,11 @@ async function commit(
       merchant: command.merchant,
       location: command.location,
       category:
-        normalizePurchaseCategory(command.category) ??
-        classifyPurchaseCategory(`${description} ${command.merchant ?? ''} ${command.location ?? ''}`),
+        automaticCategory !== 'geral'
+          ? automaticCategory
+          : requestedCategory && requestedCategory !== 'geral'
+            ? requestedCategory
+            : 'geral',
       totalCents,
       paymentMethod: command.paymentMethod ?? 'pix',
       installmentsCount: command.installments ?? 1,

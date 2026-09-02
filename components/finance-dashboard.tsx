@@ -225,9 +225,8 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
     );
   }, [data]);
 
-  async function sendMessage(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const content = message.trim();
+  async function sendChatMessage(value: string) {
+    const content = value.trim();
     if (!content || sending) return;
     const messageId = safeId();
     const createdAt = new Date().toISOString();
@@ -292,6 +291,11 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
     }
   }
 
+  async function sendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await sendChatMessage(message);
+  }
+
   async function savePhone(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (savingPhone) return;
@@ -353,8 +357,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   }
 
   function startCardCorrection(cardName: string) {
-    setMessage(`Corrigir bandeira do cartão ${cardName} para `);
-    window.requestAnimationFrame(() => messageInputRef.current?.focus());
+    void sendChatMessage(`Corrigir bandeira do cartão ${cardName}`);
   }
 
   const empty = !loading && data && data.messages.length === 0;
@@ -605,9 +608,10 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                     <button
                       type="button"
                       onClick={() => startCardCorrection(card.name)}
-                      className="mt-3 block text-xs font-semibold text-[#174f40] underline-offset-2 hover:underline"
+                      disabled={sending}
+                      className="mt-3 block text-xs font-semibold text-[#174f40] underline-offset-2 hover:underline disabled:cursor-wait disabled:opacity-60"
                     >
-                      Corrigir dados do cartão
+                      {sending ? 'Abrindo correção…' : 'Corrigir dados do cartão'}
                     </button>
                   </div>
                 );
