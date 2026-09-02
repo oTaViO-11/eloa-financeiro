@@ -98,7 +98,7 @@ const HELP_TEXT = [
   '🧾 COMPRAS',
   '• “Comprei 12 bananas por R$ 23 no Pix”',
   '• “Paguei R$ 40 por uma consulta na UPA no Pix”',
-  '• Para informar o local: use o campo Local (opcional) no painel ou escreva “local: Feira do Centro”.',
+  '• Para informar o local, escreva na mesma mensagem: “local: Feira do Centro”.',
   '• Eu separo produto, quantidade, pagamento, estabelecimento, local e categoria.',
   '',
   '💳 CARTÕES E FATURAS',

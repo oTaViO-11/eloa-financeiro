@@ -163,7 +163,6 @@ async function readJson<T>(response: Response): Promise<T> {
 export function FinanceDashboard({ displayName }: { displayName: string }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [message, setMessage] = useState('');
-  const [purchaseLocation, setPurchaseLocation] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -229,13 +228,9 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const content = message.trim();
-    const location = purchaseLocation.trim();
     if (!content || sending) return;
     const messageId = safeId();
     const createdAt = new Date().toISOString();
-    const visibleContent = location
-      ? `${content}\nLocal: ${location}`
-      : content;
     shouldStickToBottomRef.current = true;
     setMessage('');
     setSending(true);
@@ -249,7 +244,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
               {
                 id: `${messageId}-user`,
                 role: 'user',
-                content: visibleContent,
+                content,
                 source: 'panel',
                 createdAt,
               },
@@ -263,8 +258,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            message: visibleContent,
-            location: location || undefined,
+            message: content,
             messageId,
           }),
         }),
@@ -286,7 +280,6 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
             }
           : current,
       );
-      setPurchaseLocation('');
       void loadDashboard();
     } catch (error) {
       setNotice(
@@ -500,7 +493,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                       ref={messageInputRef}
                       value={message}
                       onChange={(event) => setMessage(event.target.value)}
-                      placeholder="Ex.: Comprei mercado por R$ 85 no Pix"
+                      placeholder="Ex.: Comprei mercado por R$ 85 no Pix, local: Feira do Centro"
                       maxLength={2000}
                       rows={2}
                       className="min-h-12 flex-1 resize-none rounded-xl border border-[#cfdad1] bg-[#fcfdfb] px-3 py-2.5 text-sm text-[#143b32] outline-none transition focus:border-[#174f40] focus:ring-2 focus:ring-[#174f40]/15"
@@ -516,22 +509,9 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                       </span>
                     </Button>
                   </div>
-                  <div className="grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                    <label htmlFor="purchase-location" className="sr-only">
-                      Local da compra, opcional
-                    </label>
-                    <input
-                      id="purchase-location"
-                      value={purchaseLocation}
-                      onChange={(event) => setPurchaseLocation(event.target.value)}
-                      placeholder="Local da compra (opcional): ex. Feira do Centro"
-                      maxLength={120}
-                      className="h-10 w-full rounded-xl border border-[#d9e0d4] bg-[#fcfdfb] px-3 text-sm text-[#143b32] outline-none transition focus:border-[#174f40] focus:ring-2 focus:ring-[#174f40]/15"
-                    />
-                    <p className="text-xs leading-5 text-[#668078] sm:text-right">
-                      Se não informar, o local não aparece no relatório.
-                    </p>
-                  </div>
+                  <p className="text-xs leading-5 text-[#668078]">
+                    Local é opcional: escreva <span className="font-semibold">local: nome do local</span> na mesma mensagem. Se não informar, ele não aparece no relatório.
+                  </p>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
