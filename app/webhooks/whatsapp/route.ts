@@ -123,14 +123,16 @@ export async function POST(request: Request) {
         const user = await findUserByWhatsapp(from);
         if (!user) continue;
         try {
-          const reply = await processFinanceMessage({
+          const result = await processFinanceMessage({
             user,
             text: content,
             source: 'whatsapp',
             messageId: providerMessageId,
           });
-          await sendWhatsAppText(from, reply);
-          await saveWebhookReply(providerMessageId, reply);
+          await sendWhatsAppText(from, result.reply);
+          if (!result.didReset) {
+            await saveWebhookReply(providerMessageId, result.reply);
+          }
         } catch (error) {
           console.error('whatsapp_message_failed', error instanceof Error ? error.message : 'unknown');
         }

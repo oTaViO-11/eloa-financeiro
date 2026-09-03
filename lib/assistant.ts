@@ -25,6 +25,7 @@ import {
   listCards,
   listPurchases,
   recordCardPayment,
+  resetUserData,
   saveAnalysis,
   saveInteraction,
   saveSession,
@@ -49,6 +50,7 @@ type Intent =
   | 'update_data'
   | 'update_card'
   | 'delete_card'
+  | 'reset_data'
   | 'confirm'
   | 'cancel'
   | 'unknown';
@@ -92,6 +94,11 @@ type MessageInput = {
   messageId: string;
 };
 
+export type FinanceMessageResult = {
+  reply: string;
+  didReset?: boolean;
+};
+
 const HELP_TEXT = [
   '✨ COMO POSSO AJUDAR',
   '',
@@ -112,6 +119,7 @@ const HELP_TEXT = [
   '• ATUALIZAR DADOS — mostra o que pode ser corrigido.',
   '• “Corrigir bandeira do cartão Mercado Pago para Visa”.',
   '• RESUMO ou ÚLTIMAS COMPRAS — acompanha o mês.',
+  '• RESETAR — apaga todos os dados financeiros e o histórico desta conta. Para concluir, é preciso responder “SIM, RESETAR”.',
   '',
   '🏷️ CATEGORIAS',
   'Reconheço alimentação, saúde, casa, roupas, transporte, moradia, contas e serviços, tecnologia, educação, lazer, cuidados pessoais, pets, trabalho, assinaturas, presentes, impostos e geral.',
@@ -137,6 +145,7 @@ const intents: Intent[] = [
   'update_data',
   'update_card',
   'delete_card',
+  'reset_data',
   'confirm',
   'cancel',
   'unknown',
@@ -669,6 +678,8 @@ function fallbackExtract(text: string, today: string): Command {
     return { intent: 'update_data' };
   if (/\b(ultimas compras|minhas compras|listar compras)\b/.test(normalized))
     return { intent: 'list_purchases' };
+  if (/^(?:resetar|reiniciar|limpar|apagar)\s+(?:todos?\s+)?(?:os\s+)?(?:meus\s+)?dados\b|^resetar\b/.test(normalized))
+    return { intent: 'reset_data' };
   if (/^(confirmar|confirmo)\b/.test(normalized)) return { intent: 'confirm' };
   if (/^(cancelar|cancela|nao|não)\b/.test(normalized))
     return { intent: 'cancel' };
@@ -907,6 +918,7 @@ function isNewFinancialAction(intent: Intent): boolean {
     'record_card_payment',
     'update_card',
     'delete_card',
+    'reset_data',
   ].includes(intent);
 }
 
@@ -1023,6 +1035,7 @@ async function extractWithAi(
           'Os comandos “meus dados” e “atualizar dados” usam os intents my_data e update_data. ' +
           'Para “corrigir bandeira do cartão Mercado Pago para Visa”, use update_card, cardName Mercado Pago e cardBrand visa. ' +
           'Para “excluir cartão Nubank”, use delete_card e cardName Nubank. ' +
+          'Para “resetar”, “resetar meus dados” ou “apagar todos os dados”, use reset_data. ' +
           'Para “paguei R$ 300 da fatura do Nubank”, use record_card_payment, cardName Nubank e amount R$ 300; isso nunca é uma compra nova. ' +
           'Se a pessoa informar uma bandeira de cartão, use cardBrand; não invente uma bandeira ausente. ' +
           'Qualquer alimento, bebida ou refeição deve usar a categoria alimentacao, mesmo com variações de escrita. ' +
@@ -1149,6 +1162,19 @@ const REVIEW_INSTRUCTIONS = [
 ];
 
 function preview(command: Command): string {
+  if (command.intent === 'reset_data') {
+    return [
+      '⚠️ RESETAR TODOS OS DADOS',
+      'Esta ação apagará permanentemente seus dados financeiros da Eloá:',
+      '• perfil e número do WhatsApp',
+      '• cartões, compras, parcelas e pagamentos de fatura',
+      '• análises e todo o histórico da conversa',
+      '',
+      'Sua conta de acesso continuará existindo, mas a Eloá ficará vazia para você começar do zero.',
+      'Para apagar tudo, responda exatamente: SIM, RESETAR.',
+      'Para desistir, responda CANCELAR.',
+    ].join('\n');
+  }
   if (command.intent === 'record_purchase') {
     const lines = [
       '🧾 Prévia da compra:',
@@ -1240,6 +1266,12 @@ function preview(command: Command): string {
 
 function isPositiveConfirmation(value: string): boolean {
   return /^(?:s+|s+i+m+|confirmar|confirmo|confirmado|pode(?:\s+(?:salvar|registrar|confirmar))?|salvar|registre|registrar|ok(?:ay)?|certo|isso|ta|beleza|blz|fechado)(?:\b|$)/.test(
+    value,
+  );
+}
+
+function isResetConfirmation(value: string): boolean {
+  return /^(?:sim|confirmo|confirmar)\s*,?\s*resetar(?:\s+(?:tudo|todos\s+os\s+dados|meus\s+dados))?[.!?]*$/.test(
     value,
   );
 }
@@ -1689,27 +1721,30 @@ function isInformationalIntent(intent: Intent): boolean {
   ].includes(intent);
 }
 
-async function finish(input: MessageInput, reply: string): Promise<string> {
+async function finish(
+  input: MessageInput,
+  reply: string,
+): Promise<FinanceMessageResult> {
   await saveInteraction(input.user.id, {
     source: input.source,
     sourceMessageId: input.messageId,
     userText: input.text,
     reply,
   });
-  return reply;
+  return { reply };
 }
 
 export async function processFinanceMessage(
   input: MessageInput,
-): Promise<string> {
+): Promise<FinanceMessageResult> {
   const cached = await getCachedReply(
     input.user.id,
     input.source,
     input.messageId,
   );
-  if (cached) return cached;
+  if (cached) return { reply: cached };
   const text = input.text.trim();
-  if (!text) return 'Digite uma mensagem para eu ajudar.';
+  if (!text) return { reply: 'Digite uma mensagem para eu ajudar.' };
   if (hasSensitiveData(text)) return finish(input, SENSITIVE_WARNING);
 
   const normalized = normalizeText(text);
@@ -1727,6 +1762,26 @@ export async function processFinanceMessage(
 
   if (session.state === 'awaiting_confirmation' && session.pending) {
     const pending = session.pending as unknown as PendingAction;
+    if (pending.command.intent === 'reset_data') {
+      if (!isResetConfirmation(normalized)) {
+        return finish(
+          input,
+          'Para proteger seus dados, escreva exatamente SIM, RESETAR para apagar tudo. Para desistir, responda CANCELAR.',
+        );
+      }
+      try {
+        await resetUserData(input.user.id);
+        return {
+          reply: '✅ Todos os seus dados foram apagados. A Eloá está pronta para um novo começo.',
+          didReset: true,
+        };
+      } catch (error) {
+        return finish(
+          input,
+          `Não consegui resetar seus dados: ${error instanceof Error ? error.message : 'tente novamente'}.`,
+        );
+      }
+    }
     if (isCorrectionRequest(normalized)) {
       await saveSession(
         input.user.id,

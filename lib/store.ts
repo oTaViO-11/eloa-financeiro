@@ -700,6 +700,49 @@ export async function clearSession(userId: string, source: string): Promise<void
     .run();
 }
 
+export async function resetUserData(userId: string): Promise<void> {
+  const db = getDatabase();
+  const profile = await getProfile(userId);
+  const timestamp = now();
+  const statements = [
+    db.prepare('DELETE FROM card_payments WHERE user_id = ?').bind(userId),
+    db
+      .prepare(
+        `DELETE FROM installments
+         WHERE purchase_id IN (SELECT id FROM purchases WHERE user_id = ?)`,
+      )
+      .bind(userId),
+    db.prepare('DELETE FROM financial_analyses WHERE user_id = ?').bind(userId),
+    db.prepare('DELETE FROM purchases WHERE user_id = ?').bind(userId),
+    db.prepare('DELETE FROM cards WHERE user_id = ?').bind(userId),
+    db.prepare('DELETE FROM conversation_messages WHERE user_id = ?').bind(userId),
+    db.prepare('DELETE FROM conversation_sessions WHERE user_id = ?').bind(userId),
+    db
+      .prepare(
+        `UPDATE profiles
+         SET whatsapp_number = NULL,
+             monthly_income_cents = 0,
+             fixed_expenses_cents = 0,
+             savings_goal_cents = 0,
+             monthly_budget_cents = 0,
+             alert_credit_utilization_percent = 80,
+             updated_at = ?
+         WHERE user_id = ?`,
+      )
+      .bind(timestamp, userId),
+  ];
+
+  if (profile.whatsappNumber) {
+    statements.push(
+      db
+        .prepare('DELETE FROM webhook_events WHERE wa_id = ?')
+        .bind(profile.whatsappNumber),
+    );
+  }
+
+  await db.batch(statements);
+}
+
 export async function getCachedReply(
   userId: string,
   source: string,

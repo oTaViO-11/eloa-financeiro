@@ -28,14 +28,17 @@ export async function POST(request: Request) {
         : crypto.randomUUID();
     const authenticatedUser = { id: user.userId, displayName: user.displayName, email: user.email };
     await ensureUser(authenticatedUser);
-    const reply = await processFinanceMessage({
+    const result = await processFinanceMessage({
       user: authenticatedUser,
       text: message,
       location,
       source: 'panel',
       messageId,
     });
-    return Response.json({ reply, messageId }, { headers: { 'Cache-Control': 'no-store' } });
+    return Response.json(
+      { reply: result.reply, messageId, didReset: Boolean(result.didReset) },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
   } catch (error) {
     console.error('panel_message_failed', error instanceof Error ? error.message : 'unknown');
     return Response.json({ error: 'Não foi possível responder agora. Tente novamente.' }, { status: 500 });

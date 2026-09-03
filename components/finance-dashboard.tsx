@@ -2,6 +2,7 @@
 
 import {
   type FormEvent,
+  type KeyboardEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -252,7 +253,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
         : current,
     );
     try {
-      const result = await readJson<{ reply: string }>(
+      const result = await readJson<{ reply: string; didReset?: boolean }>(
         await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -262,6 +263,31 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
           }),
         }),
       );
+      if (result.didReset) {
+        setData((current) =>
+          current
+            ? {
+                ...current,
+                profile: {
+                  ...current.profile,
+                  whatsappNumber: null,
+                  monthlyIncomeCents: 0,
+                  fixedExpensesCents: 0,
+                  savingsGoalCents: 0,
+                  monthlyBudgetCents: 0,
+                },
+                effectiveBudgetCents: 0,
+                spendingCents: 0,
+                cards: [],
+                purchases: [],
+                messages: [],
+              }
+            : current,
+        );
+        setPhone('');
+        setNotice(result.reply);
+        return;
+      }
       setData((current) =>
         current
           ? {
@@ -294,6 +320,17 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await sendChatMessage(message);
+  }
+
+  function handleMessageKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (
+      event.key === 'Enter' &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault();
+      void sendChatMessage(message);
+    }
   }
 
   async function savePhone(event: FormEvent<HTMLFormElement>) {
@@ -496,6 +533,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                       ref={messageInputRef}
                       value={message}
                       onChange={(event) => setMessage(event.target.value)}
+                      onKeyDown={handleMessageKeyDown}
                       placeholder="Ex.: Comprei mercado por R$ 85 no Pix, local: Feira do Centro"
                       maxLength={2000}
                       rows={2}
@@ -513,7 +551,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                     </Button>
                   </div>
                   <p className="text-xs leading-5 text-[#668078]">
-                    Local é opcional: escreva <span className="font-semibold">local: nome do local</span> na mesma mensagem. Se não informar, ele não aparece no relatório.
+                    Pressione <span className="font-semibold">Enter</span> para enviar e <span className="font-semibold">Shift + Enter</span> para quebrar a linha. Local é opcional: escreva <span className="font-semibold">local: nome do local</span> na mesma mensagem. Se não informar, ele não aparece no relatório.
                   </p>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -522,6 +560,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                     'Meus dados',
                     'Atualizar dados',
                     'Excluir cartão',
+                    'Resetar dados',
                     'Minha renda é R$ 2.500 e orçamento R$ 700',
                     'Cartão Nubank, limite R$ 1.500, fecha dia 5 e vence dia 12',
                     'Posso comprar algo de R$ 300 no crédito?',
