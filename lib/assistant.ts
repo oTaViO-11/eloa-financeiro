@@ -55,7 +55,7 @@ type Intent =
   | 'cancel'
   | 'unknown';
 
-type PaymentMethod = 'credit' | 'debit' | 'pix' | 'cash';
+type PaymentMethod = 'credit' | 'debit' | 'pix' | 'cash' | 'boleto';
 
 type Command = {
   intent: Intent;
@@ -105,6 +105,9 @@ const HELP_TEXT = [
   '🧾 COMPRAS',
   '• “Comprei 12 bananas por R$ 23 no Pix”',
   '• “Paguei R$ 40 por uma consulta na UPA no Pix”',
+  '• “Paguei a assinatura da Netflix por R$ 20 no Pix”',
+  '• “Apliquei R$ 200 em CDB no Pix”',
+  '• “Paguei o boleto da Enel de R$ 120” — fica na área de boletos.',
   '• Para informar o local, escreva na mesma mensagem: “local: Feira do Centro”.',
   '• Eu separo produto, quantidade, pagamento, estabelecimento, local e categoria.',
   '',
@@ -122,7 +125,7 @@ const HELP_TEXT = [
   '• RESETAR — apaga todos os dados financeiros e o histórico desta conta. Para concluir, é preciso responder “SIM, RESETAR”.',
   '',
   '🏷️ CATEGORIAS',
-  'Reconheço alimentação, saúde, casa, roupas, transporte, moradia, contas e serviços, tecnologia, educação, lazer, cuidados pessoais, pets, trabalho, assinaturas, presentes, impostos e geral.',
+  'Reconheço alimentação, saúde, casa, roupas, transporte, moradia, contas e serviços, tecnologia, educação, lazer, cuidados pessoais, pets, trabalho, assinaturas, investimentos, boletos, presentes, impostos e geral.',
   '',
   '✅ REVISÃO',
   'Nada é salvo sem revisão. Responda SIM para confirmar, CORRIGIR para ajustar ou CANCELAR para desistir.',
@@ -371,6 +374,7 @@ function parseDateFromText(text: string, fallback: string): string {
 }
 
 function paymentMethodFromText(normalized: string): PaymentMethod | undefined {
+  if (/\b(?:boleto|boletos)\b/.test(normalized)) return 'boleto';
   if (/\b(pix)\b/.test(normalized)) return 'pix';
   if (/\b(?:debito|cartao\s+(?:de\s+)?debito)\b/.test(normalized))
     return 'debit';
@@ -467,7 +471,22 @@ function cleanPurchaseDescription(value: unknown): string | undefined {
       '',
     )
     .trim();
-  return cleanText(withoutPayment, 120);
+  const withoutSubscriptionPrefix = withoutPayment
+    .replace(
+      /^(?:(?:a|o|uma?|um)\s+)?(?:assinatura|mensalidade)\s+(?:(?:do|da|de)\s+)?/iu,
+      '',
+    )
+    .trim();
+  const withoutBoletoPrefix = withoutSubscriptionPrefix
+    .replace(
+      /^(?:(?:o|um)\s+)?boletos?\s+(?:(?:do|da|de)\s+)?/iu,
+      '',
+    )
+    .trim();
+  return cleanText(
+    withoutBoletoPrefix || withoutSubscriptionPrefix || withoutPayment,
+    120,
+  );
 }
 
 type PurchaseDetails = {
@@ -541,15 +560,21 @@ function purchaseDetailsFromDescription(value: unknown): PurchaseDetails {
 
 function rawPurchaseDescriptionFromText(text: string): string | undefined {
   const amount = String.raw`(?:\d+\s+reais?\s+e\s+\d{1,2}\s+centavos?|(?:r\s*(?:\$|s)\s*)?\d[\d.,]*(?:\s+reais?)?)`;
+  const investmentFirst = text.match(
+    new RegExp(
+      String.raw`\b(?:investi|apliquei|aportei)\s+${amount}\s+(?:em|no|na)\s+(.+?)(?=\s+(?:no|na|com)\s+(?:pix|cr[eé]dito|d[eé]bito|cart[aã]o|dinheiro)|\s+(?:hoje|ontem)\b|[,.!?]|$)`,
+      'iu',
+    ),
+  );
   const paidFirst = text.match(
     new RegExp(
-      String.raw`\b(?:paguei|gastei)\s+${amount}\s+(?:pelo|pela|por|no|na|em)\s+(.+?)(?=\s+(?:no|na|com)\s+(?:pix|cr[eé]dito|d[eé]bito|cart[aã]o|dinheiro)|\s+(?:hoje|ontem)\b|[,.!?]|$)`,
+      String.raw`\b(?:paguei|gastei)\s+${amount}\s+(?:pelo|pela|por|no|na|em|de)\s+(.+?)(?=\s+(?:no|na|com)\s+(?:pix|cr[eé]dito|d[eé]bito|cart[aã]o|dinheiro)|\s+(?:hoje|ontem)\b|[,.!?]|$)`,
       'iu',
     ),
   );
   const purchaseFirst = text.match(
     new RegExp(
-      String.raw`\b(?:comprei|paguei|gastei)\s+(.+?)(?=\s+(?:por|de)\s+${amount}|\s+${amount}|$)`,
+      String.raw`\b(?:comprei|paguei|gastei|assinei|renovei|investi|apliquei|aportei)\s+(.+?)(?=\s+(?:por|de)\s+${amount}|\s+${amount}|$)`,
       'iu',
     ),
   );
@@ -559,11 +584,11 @@ function rawPurchaseDescriptionFromText(text: string): string | undefined {
       'iu',
     ),
   );
-  const described = paidFirst?.[1] ?? question?.[1] ?? purchaseFirst?.[1];
+  const described = investmentFirst?.[1] ?? paidFirst?.[1] ?? question?.[1] ?? purchaseFirst?.[1];
   if (described) return cleanPurchaseDescription(described);
   const flexible = text
     .replace(/(?:r\s*(?:\$|s)\s*)?\d[\d.,]*(?:\s+reais?|\s+rs)?/giu, ' ')
-    .replace(/\b(?:comprei|paguei|gastei|pix|dinheiro|d[eé]bito|cr[eé]d(?:ito|tio)|cart[aã]o)\b/giu, ' ')
+    .replace(/\b(?:comprei|paguei|gastei|assinei|renovei|investi|apliquei|aportei|pix|dinheiro|d[eé]bito|cr[eé]d(?:ito|tio)|cart[aã]o)\b/giu, ' ')
     .replace(/\b(?:no|na|com|via|por|de|hoje|ontem)\b/giu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -660,7 +685,7 @@ function fallbackExtract(text: string, today: string): Command {
   const corrected = correctFinanceText(text);
   const normalized = normalizeText(corrected);
   const date = parseDateFromText(corrected, today);
-  const hasFinancialAction = /\b(?:comprei|paguei|gastei|cartao|cartão|renda|orcamento|orçamento)\b/.test(normalized);
+  const hasFinancialAction = /\b(?:comprei|paguei|gastei|assinei|renovei|investi|apliquei|aportei|boleto|cartao|cartão|renda|orcamento|orçamento)\b/.test(normalized);
   if (/^(?:o+[iy]+|ol+a+|bom dia|boa tarde|boa noite)\b/.test(normalized) && !hasFinancialAction)
     return { intent: 'greeting' };
   if (/\b(?:ajud+a+|ajd|exemplos|o que voce faz|como funciona)\b/.test(normalized) && !hasFinancialAction)
@@ -780,10 +805,17 @@ function fallbackExtract(text: string, today: string): Command {
   }
   const purchaseDetails = purchaseDetailsFromText(corrected);
   const description = purchaseDetails.description;
-  const merchant = merchantFromText(corrected);
+  const detectedMerchant = merchantFromText(corrected);
+  const merchant =
+    detectedMerchant &&
+    normalizeText(detectedMerchant) === normalizeText(description ?? '')
+      ? undefined
+      : detectedMerchant;
   const location = locationFromText(corrected);
-  const category = categoryFromPurchaseDetails(description, merchant);
-  const hasPurchaseVerb = /\b(comprei|paguei|gastei)\b/.test(normalized);
+  const category = paymentMethod === 'boleto'
+    ? 'boletos'
+    : categoryFromPurchaseDetails(description, merchant);
+  const hasPurchaseVerb = /\b(comprei|paguei|gastei|assinei|renovei|investi|apliquei|aportei)\b/.test(normalized);
   const inferredPurchase = Boolean(
     amount &&
       paymentMethod &&
@@ -844,7 +876,7 @@ function commandFromUnknown(value: unknown): Command | null {
       ? (item.intent as Intent)
       : null;
   if (!intent) return null;
-  const paymentMethod = ['credit', 'debit', 'pix', 'cash'].includes(
+  const paymentMethod = ['credit', 'debit', 'pix', 'cash', 'boleto'].includes(
     String(item.paymentMethod),
   )
     ? (item.paymentMethod as PaymentMethod)
@@ -998,7 +1030,7 @@ async function extractWithAi(
       category: { type: ['string', 'null'] },
       paymentMethod: {
         type: ['string', 'null'],
-        enum: ['credit', 'debit', 'pix', 'cash', null],
+        enum: ['credit', 'debit', 'pix', 'cash', 'boleto', null],
       },
       installments: { type: ['integer', 'null'] },
       cardName: { type: ['string', 'null'] },
@@ -1037,11 +1069,13 @@ async function extractWithAi(
           'Para “excluir cartão Nubank”, use delete_card e cardName Nubank. ' +
           'Para “resetar”, “resetar meus dados” ou “apagar todos os dados”, use reset_data. ' +
           'Para “paguei R$ 300 da fatura do Nubank”, use record_card_payment, cardName Nubank e amount R$ 300; isso nunca é uma compra nova. ' +
+          'Quando a mensagem disser boleto, use paymentMethod boleto, categoria boletos e registre uma compra. Uma fatura de cartão continua sendo record_card_payment mesmo quando for quitada por boleto; não a registre como compra nova. ' +
           'Se a pessoa informar uma bandeira de cartão, use cardBrand; não invente uma bandeira ausente. ' +
           'Qualquer alimento, bebida ou refeição deve usar a categoria alimentacao, mesmo com variações de escrita. ' +
           'Para compras, description deve conter apenas o produto, sem quantidade, preço, forma de pagamento, estabelecimento ou local. quantity e quantityUnit são campos separados e só devem ser preenchidos quando a pessoa informou uma quantidade. ' +
           'Só use location quando a pessoa informou explicitamente o local; nunca use “desconhecido” ou “não informado”. merchant é o estabelecimento, não o local. ' +
-          'Classifique compras em alimentação, saúde, casa, roupas, transporte, moradia, contas e serviços, tecnologia, educação, lazer, cuidados pessoais, pets, assinaturas, trabalho, presentes e doações, impostos e taxas ou geral. ' +
+          'Classifique compras em alimentação, saúde, casa, roupas, transporte, moradia, contas e serviços, tecnologia, educação, lazer, cuidados pessoais, pets, assinaturas, investimentos, boletos, trabalho, presentes e doações, impostos e taxas ou geral. ' +
+          'Assinaturas devem usar a categoria assinaturas e description deve manter somente o nome do serviço ou produto, como Netflix, Spotify ou Canva. Aplicações, aportes, CDB, Tesouro Direto, ações, fundos, ETFs e criptomoedas devem usar a categoria investimento. ' +
           'Valores devem manter a forma dita pela pessoa. Retorne somente o objeto solicitado.',
         input: text.slice(0, 2000),
         text: {
@@ -1132,7 +1166,7 @@ function questionFor(field: string): string {
     produto: 'Qual foi o produto ou serviço comprado? Ex.: bananas ou consulta médica.',
     valor: 'Qual foi o valor? Ex.: R$ 42,90.',
     'valor do pagamento': 'Qual foi o valor pago na fatura? Ex.: R$ 250,00.',
-    'forma de pagamento': 'Como pagou: crédito, débito, Pix ou dinheiro?',
+    'forma de pagamento': 'Como pagou: crédito, débito, Pix, dinheiro ou boleto?',
     data: 'Qual foi a data? Use DD/MM/AAAA, hoje ou ontem.',
     cartão: 'Qual é o apelido do cartão?',
     parcelas: 'Em quantas parcelas? Escreva, por exemplo, 3x.',
@@ -1152,6 +1186,7 @@ function labelPayment(method?: PaymentMethod): string {
     debit: 'débito',
     pix: 'Pix',
     cash: 'dinheiro',
+    boleto: 'boleto',
   };
   return method ? labels[method] : 'não informado';
 }

@@ -99,6 +99,7 @@ function paymentLabel(method: string): string {
     credit: 'Crédito',
     debit: 'Débito',
     cash: 'Dinheiro',
+    boleto: 'Boleto',
   };
   return labels[method] ?? method;
 }
@@ -117,6 +118,8 @@ const categoryTone: Record<string, string> = {
   pets: 'bg-yellow-50 text-yellow-800 ring-1 ring-yellow-100',
   tecnologia: 'bg-blue-50 text-blue-700 ring-1 ring-blue-100',
   assinaturas: 'bg-purple-50 text-purple-700 ring-1 ring-purple-100',
+  investimento: 'bg-teal-50 text-teal-700 ring-1 ring-teal-100',
+  boletos: 'bg-lime-50 text-lime-800 ring-1 ring-lime-100',
   trabalho: 'bg-slate-100 text-slate-700 ring-1 ring-slate-200',
   presentes_doacoes: 'bg-red-50 text-red-700 ring-1 ring-red-100',
   impostos_taxas: 'bg-stone-100 text-stone-700 ring-1 ring-stone-200',
@@ -225,6 +228,24 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
       Math.round((data.spendingCents / data.effectiveBudgetCents) * 100),
     );
   }, [data]);
+
+  const regularPurchases = useMemo(
+    () =>
+      data?.purchases.filter(
+        (purchase) =>
+          purchase.paymentMethod !== 'boleto' && purchase.category !== 'boletos',
+      ) ?? [],
+    [data?.purchases],
+  );
+
+  const boletoPayments = useMemo(
+    () =>
+      data?.purchases.filter(
+        (purchase) =>
+          purchase.paymentMethod === 'boleto' || purchase.category === 'boletos',
+      ) ?? [],
+    [data?.purchases],
+  );
 
   async function sendChatMessage(value: string) {
     const content = value.trim();
@@ -687,12 +708,12 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {!loading && !data?.purchases.length && (
+              {!loading && !regularPurchases.length && (
                 <p className="text-sm text-[#668078]">
                   Ainda não há compras registradas.
                 </p>
               )}
-              {data?.purchases.slice(0, 5).map((purchase) => (
+              {regularPurchases.slice(0, 5).map((purchase) => (
                 <div
                   key={purchase.id}
                   className="flex items-start justify-between gap-3 border-b border-[#eef1ec] pb-3 last:border-0 last:pb-0"
@@ -729,6 +750,59 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                       {purchase.merchant && (
                         <span className="text-[#668078]">
                           Estabelecimento: {purchase.merchant}
+                        </span>
+                      )}
+                      {purchase.location && (
+                        <span className="text-[#668078]">
+                          Local: {purchase.location}
+                        </span>
+                      )}
+                      <span className="text-[#668078]">
+                        {date.format(
+                          new Date(`${purchase.purchasedAt}T12:00:00`),
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                  <strong className="shrink-0 whitespace-nowrap text-sm">
+                    {formatMoney(purchase.totalCents)}
+                  </strong>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card className="border-[#d9e0d4] bg-white shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ReceiptText size={18} /> Boletos pagos
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {!loading && !boletoPayments.length && (
+                <p className="text-sm leading-6 text-[#668078]">
+                  Os boletos pagos aparecerão aqui, separados das compras e das faturas do cartão.
+                </p>
+              )}
+              {boletoPayments.slice(0, 5).map((purchase) => (
+                <div
+                  key={purchase.id}
+                  className="flex items-start justify-between gap-3 border-b border-[#eef1ec] pb-3 last:border-0 last:pb-0"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium leading-5">
+                      {purchaseDescriptionWithoutPayment(purchase.description)}
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+                      <span className="rounded-full bg-lime-50 px-2 py-0.5 font-semibold text-lime-800 ring-1 ring-lime-100">
+                        Pagamento: Boleto
+                      </span>
+                      <span className="rounded-full bg-lime-50 px-2 py-0.5 font-semibold text-lime-800 ring-1 ring-lime-100">
+                        Categoria: Boletos
+                      </span>
+                      {purchase.merchant && (
+                        <span className="text-[#668078]">
+                          Favorecido: {purchase.merchant}
                         </span>
                       )}
                       {purchase.location && (

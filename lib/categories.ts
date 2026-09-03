@@ -14,6 +14,8 @@ export const spendingCategories = [
   'pets',
   'tecnologia',
   'assinaturas',
+  'investimento',
+  'boletos',
   'trabalho',
   'presentes_doacoes',
   'impostos_taxas',
@@ -36,6 +38,8 @@ const labels: Record<SpendingCategory, string> = {
   pets: 'Pets',
   tecnologia: 'Tecnologia',
   assinaturas: 'Assinaturas',
+  investimento: 'Investimentos',
+  boletos: 'Boletos',
   trabalho: 'Trabalho',
   presentes_doacoes: 'Presentes e doações',
   impostos_taxas: 'Impostos e taxas',
@@ -49,6 +53,9 @@ const foodPattern = new RegExp(
 
 const categoryRules: Array<[SpendingCategory, RegExp]> = [
   ['saude', /\b(?:upa|consulta|medicamentos?|remedios?|remedio|hospital|clinica|exame|farmacia|farmcia|drogaria|vacina|dentista|terapia|psicolog[oa]|plano de saude|laboratorio|cirurgia|oculos|optica)\b/],
+  ['investimento', /\b(?:investimento(?:s)?|investi|investir|apliquei|aplicar|aplicacao|aportei|aporte|cdb|lci|lca|tesouro(?:\s+direto)?|renda\s+fixa|bolsa\s+de\s+valores|acoes?|fii(?:s)?|etf(?:s)?|fundo\s+de\s+investimento|previdencia(?:\s+privada)?|cripto(?:moeda)?s?|bitcoin|btc|ethereum|eth|corretora|poupanca)\b/],
+  ['assinaturas', /\b(?:assinatura|streaming|renovacao|recorrente|netflix|spotify|deezer|prime\s+video|amazon\s+prime|disney\+?|hbo|max|youtube\s+premium|icloud|google\s+one|apple\s+music|crunchyroll|globoplay|paramount\+?|adobe|canva|microsoft\s*(?:365|office)|playstation\s*(?:plus|ps)|ps\s*plus|xbox\s+(?:game\s+pass|live)|nintendo\s+switch\s+online|chatgpt\s*(?:plus|pro)|notion|dropbox)\b/],
+  ['boletos', /\b(?:boleto|boletos)\b/],
   ['contas_servicos', /\b(?:conta\s+(?:de\s+)?agua|agua\s+(?:encanada|da\s+companhia))\b/],
   ['casa', /\b(?:agua\s+sanitaria|desinfetante|detergente|sabao)\b/],
   ['pets', /\b(?:pet|racao|veterinario|veterinaria|animais?|cachorro|gato)\b/],
@@ -60,7 +67,6 @@ const categoryRules: Array<[SpendingCategory, RegExp]> = [
   ['moradia', /\b(?:aluguel|moradia|imovel|imobiliaria|financiamento da casa)\b/],
   ['tecnologia', /\b(?:celular|smartphone|notebook|computador|tablet|fone|headset|teclado|mouse|monitor|impressora|software|aplicativo|app|jogo digital)\b/],
   ['educacao', /\b(?:curso|escola|faculdade|universidade|livro|material escolar|aula|mensalidade|apostila|idioma)\b/],
-  ['assinaturas', /\b(?:assinatura|streaming|netflix|spotify|prime video|disney|hbo|youtube premium|icloud|google one)\b/],
   ['lazer', /\b(?:cinema|show|viagem|jogo|teatro|bar|balada|passeio|parque|evento)\b/],
   ['cuidados_pessoais', /\b(?:salao|barbearia|maquiagem|perfume|cosmetico|manicure|shampoo|beleza|skin care|skincare)\b/],
   ['trabalho', /\b(?:trabalho|coworking|ferramenta|equipamento profissional|material de trabalho|uniforme)\b/],
@@ -94,6 +100,8 @@ export function normalizePurchaseCategory(value: unknown): SpendingCategory | un
   if (/\b(?:pet|animais)\b/.test(normalized)) return 'pets';
   if (/\b(?:tecnologia|technology|notebook|celular)\b/.test(normalized)) return 'tecnologia';
   if (/\b(?:assinatura|subscription|streaming)\b/.test(normalized)) return 'assinaturas';
+  if (/\b(?:investimentos?|investir|aplicar|aporte|cdb|lci|lca|tesouro|renda fixa|acoes?|fii|etf|cripto|bitcoin|previdencia)\b/.test(normalized)) return 'investimento';
+  if (/\b(?:boleto|boletos)\b/.test(normalized)) return 'boletos';
   if (/\b(?:trabalho|work|ferramenta)\b/.test(normalized)) return 'trabalho';
   if (/\b(?:presente|doacao|donation)\b/.test(normalized)) return 'presentes_doacoes';
   if (/\b(?:imposto|taxa|tax)\b/.test(normalized)) return 'impostos_taxas';
