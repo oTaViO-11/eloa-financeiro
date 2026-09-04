@@ -176,6 +176,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [showAllCards, setShowAllCards] = useState(false);
   const [showAllPurchases, setShowAllPurchases] = useState(false);
+  const [showAllBoletos, setShowAllBoletos] = useState(false);
   const messageListRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -256,6 +257,9 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   const visiblePurchases = showAllPurchases
     ? regularPurchases
     : regularPurchases.slice(0, 2);
+  const visibleBoletoPayments = showAllBoletos
+    ? boletoPayments
+    : boletoPayments.slice(0, 2);
   const hiddenCardsCount = Math.max(0, (data?.cards.length ?? 0) - 2);
 
   async function sendChatMessage(value: string) {
@@ -816,10 +820,10 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                   Os boletos pagos aparecerão aqui, separados das compras e das faturas do cartão.
                 </p>
               )}
-              {boletoPayments.slice(0, 5).map((purchase) => (
+              {visibleBoletoPayments.map((purchase) => (
                 <div
                   key={purchase.id}
-                  className="flex items-start justify-between gap-3 border-b border-[#eef1ec] pb-3 last:border-0 last:pb-0"
+                  className="animate-in fade-in slide-in-from-top-1 flex items-start justify-between gap-3 border-b border-[#eef1ec] pb-3 duration-300 last:border-0 last:pb-0"
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium leading-5">
@@ -854,6 +858,22 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                   </strong>
                 </div>
               ))}
+              {boletoPayments.length > 2 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllBoletos((current) => !current)}
+                  aria-expanded={showAllBoletos}
+                  className="flex w-full items-center justify-center gap-1 rounded-xl border border-[#d9e0d4] px-3 py-2 text-xs font-semibold text-[#174f40] transition hover:border-[#174f40] hover:bg-[#f3f8f4]"
+                >
+                  {showAllBoletos
+                    ? 'Mostrar menos boletos'
+                    : `Ver mais ${boletoPayments.length - 2} boleto${boletoPayments.length - 2 === 1 ? '' : 's'}`}
+                  <ChevronDown
+                    size={15}
+                    className={`transition-transform duration-300 ${showAllBoletos ? 'rotate-180' : ''}`}
+                  />
+                </button>
+              )}
             </CardContent>
           </Card>
 
