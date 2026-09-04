@@ -108,6 +108,7 @@ const HELP_TEXT = [
   '• “Paguei a assinatura da Netflix por R$ 20 no Pix”',
   '• “Apliquei R$ 200 em CDB no Pix”',
   '• “Paguei o boleto da Enel de R$ 120” — fica na área de boletos.',
+  '• Se disser apenas que pagou um boleto, eu perguntarei qual foi para classificá-lo corretamente.',
   '• Para informar o local, escreva na mesma mensagem: “local: Feira do Centro”.',
   '• Eu separo produto, quantidade, pagamento, estabelecimento, local e categoria.',
   '',
@@ -489,6 +490,13 @@ function cleanPurchaseDescription(value: unknown): string | undefined {
   );
 }
 
+function isGenericBoletoDescription(value: string | undefined): boolean {
+  if (!value) return true;
+  return /^(?:(?:o|um)\s+)?boletos?(?:\s+pago)?$/iu.test(
+    normalizeText(value).trim(),
+  );
+}
+
 type PurchaseDetails = {
   description?: string;
   quantity?: number;
@@ -804,7 +812,11 @@ function fallbackExtract(text: string, today: string): Command {
     };
   }
   const purchaseDetails = purchaseDetailsFromText(corrected);
-  const description = purchaseDetails.description;
+  const description =
+    paymentMethod === 'boleto' &&
+    isGenericBoletoDescription(purchaseDetails.description)
+      ? undefined
+      : purchaseDetails.description;
   const detectedMerchant = merchantFromText(corrected);
   const merchant =
     detectedMerchant &&
@@ -812,9 +824,13 @@ function fallbackExtract(text: string, today: string): Command {
       ? undefined
       : detectedMerchant;
   const location = locationFromText(corrected);
-  const category = paymentMethod === 'boleto'
-    ? 'boletos'
-    : categoryFromPurchaseDetails(description, merchant);
+  const inferredCategory = categoryFromPurchaseDetails(description, merchant);
+  const category =
+    inferredCategory !== 'geral'
+      ? inferredCategory
+      : paymentMethod === 'boleto'
+        ? 'boletos'
+        : inferredCategory;
   const hasPurchaseVerb = /\b(comprei|paguei|gastei|assinei|renovei|investi|apliquei|aportei)\b/.test(normalized);
   const inferredPurchase = Boolean(
     amount &&
@@ -1069,7 +1085,7 @@ async function extractWithAi(
           'Para “excluir cartão Nubank”, use delete_card e cardName Nubank. ' +
           'Para “resetar”, “resetar meus dados” ou “apagar todos os dados”, use reset_data. ' +
           'Para “paguei R$ 300 da fatura do Nubank”, use record_card_payment, cardName Nubank e amount R$ 300; isso nunca é uma compra nova. ' +
-          'Quando a mensagem disser boleto, use paymentMethod boleto, categoria boletos e registre uma compra. Uma fatura de cartão continua sendo record_card_payment mesmo quando for quitada por boleto; não a registre como compra nova. ' +
+          'Quando a mensagem disser boleto, use paymentMethod boleto e registre uma compra. Se não disser qual boleto foi pago, deixe description nula para a Eloá perguntar. Quando disser o que é, use a categoria correta para o conteúdo, como contas e serviços para energia, moradia para aluguel, educação para curso e saúde para plano ou consulta. Uma fatura de cartão continua sendo record_card_payment mesmo quando for quitada por boleto; não a registre como compra nova. ' +
           'Se a pessoa informar uma bandeira de cartão, use cardBrand; não invente uma bandeira ausente. ' +
           'Qualquer alimento, bebida ou refeição deve usar a categoria alimentacao, mesmo com variações de escrita. ' +
           'Para compras, description deve conter apenas o produto, sem quantidade, preço, forma de pagamento, estabelecimento ou local. quantity e quantityUnit são campos separados e só devem ser preenchidos quando a pessoa informou uma quantidade. ' +
@@ -1137,7 +1153,8 @@ function missingFields(command: Command): string[] {
   }
   if (command.intent === 'record_purchase') {
     const fields = [
-      !command.description && 'produto',
+      !command.description &&
+        (command.paymentMethod === 'boleto' ? 'boleto pago' : 'produto'),
       !command.amount && 'valor',
       !command.paymentMethod && 'forma de pagamento',
       !command.purchaseDate && 'data',
@@ -1164,6 +1181,7 @@ function missingFields(command: Command): string[] {
 function questionFor(field: string): string {
   const questions: Record<string, string> = {
     produto: 'Qual foi o produto ou serviço comprado? Ex.: bananas ou consulta médica.',
+    'boleto pago': 'Qual boleto você pagou? Ex.: energia, aluguel, curso ou plano de saúde.',
     valor: 'Qual foi o valor? Ex.: R$ 42,90.',
     'valor do pagamento': 'Qual foi o valor pago na fatura? Ex.: R$ 250,00.',
     'forma de pagamento': 'Como pagou: crédito, débito, Pix, dinheiro ou boleto?',
@@ -1361,9 +1379,17 @@ function followUpDetails(
     ? Number(corrected.trim())
     : undefined;
   const pendingFields = missingFields(pending);
-  const purchaseDetails = pendingFields.includes('produto')
+  const needsPurchaseDescription =
+    pendingFields.includes('produto') || pendingFields.includes('boleto pago');
+  const purchaseDetails = needsPurchaseDescription
     ? purchaseDetailsFromText(corrected)
     : {};
+  const followUpCategory = purchaseDetails.description
+    ? categoryFromPurchaseDetails(
+        purchaseDetails.description,
+        merchantFromText(corrected),
+      )
+    : undefined;
   const inferredCardName = pendingFields.includes('nome do cartão') || pendingFields.includes('cartão')
     ? cardNameFromCorrectionText(corrected) ??
       cardNameFromText(corrected) ??
@@ -1378,6 +1404,10 @@ function followUpDetails(
     description: purchaseDetails.description,
     quantity: purchaseDetails.quantity,
     quantityUnit: purchaseDetails.quantityUnit,
+    category:
+      followUpCategory && followUpCategory !== 'geral'
+        ? followUpCategory
+        : undefined,
     paymentMethod: paymentMethodFromText(normalized),
     installments:
       Number.isInteger(installments) && installments >= 1 && installments <= 48

@@ -14,6 +14,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Bot,
+  ChevronDown,
   CreditCard,
   LoaderCircle,
   LockKeyhole,
@@ -173,6 +174,8 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   const [savingPhone, setSavingPhone] = useState(false);
   const [resolvingBrandCardId, setResolvingBrandCardId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showAllCards, setShowAllCards] = useState(false);
+  const [showAllPurchases, setShowAllPurchases] = useState(false);
   const messageListRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -246,6 +249,14 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
       ) ?? [],
     [data?.purchases],
   );
+
+  const visibleCards = showAllCards
+    ? data?.cards ?? []
+    : data?.cards.slice(0, 2) ?? [];
+  const visiblePurchases = showAllPurchases
+    ? regularPurchases
+    : regularPurchases.slice(0, 2);
+  const hiddenCardsCount = Math.max(0, (data?.cards.length ?? 0) - 2);
 
   async function sendChatMessage(value: string) {
     const content = value.trim();
@@ -422,8 +433,8 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   const initialLoading = loading && !data;
 
   return (
-    <main className="min-h-screen bg-[#f5f6f1] text-[#143b32]">
-      <header className="border-b border-[#d9e0d4] bg-[#fbfcf8]/90 backdrop-blur">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#ffffff_0,_#f5f6f1_42%,_#eff3ed_100%)] text-[#143b32]">
+      <header className="sticky top-0 z-20 border-b border-[#d9e0d4]/80 bg-[#fbfcf8]/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[#174f40] text-white shadow-sm">
@@ -444,18 +455,17 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-7xl gap-6 px-5 py-7 sm:px-8 lg:grid-cols-[minmax(0,1.55fr)_minmax(320px,.85fr)]">
+      <div className="mx-auto grid max-w-7xl gap-5 px-5 py-6 sm:px-8 lg:grid-cols-[minmax(0,1.55fr)_minmax(320px,.85fr)]">
         <section className="space-y-6">
-          <div className="rounded-[2rem] bg-[#174f40] px-6 py-7 text-[#f7faf5] shadow-[0_20px_60px_rgba(20,66,53,.16)] sm:px-8">
+          <div className="rounded-[2rem] bg-[#174f40] px-6 py-6 text-[#f7faf5] shadow-[0_20px_60px_rgba(20,66,53,.16)] transition-shadow duration-300 hover:shadow-[0_24px_70px_rgba(20,66,53,.22)] sm:px-8">
             <p className="text-sm text-[#c9ddd3]">
               Olá, {displayName.split(' ')[0]}.
             </p>
-            <h2 className="mt-2 max-w-xl font-serif text-3xl leading-tight sm:text-4xl">
+            <h2 className="mt-1 max-w-xl font-serif text-3xl leading-tight sm:text-4xl">
               Suas decisões financeiras, uma conversa de cada vez.
             </h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-[#d7e5de]">
-              Registre gastos, consulte o cartão e ajuste o seu plano usando
-              mensagens simples. Nada é salvo sem a sua confirmação.
+              Diga o que aconteceu. Eu organizo e você só confirma antes de salvar.
             </p>
           </div>
 
@@ -469,7 +479,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
           )}
 
           <section
-            className="grid gap-4 sm:grid-cols-3"
+            className="grid gap-4 sm:grid-cols-2"
             aria-label="Resumo mensal"
           >
             <MetricCard
@@ -479,12 +489,6 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
               }
               icon={<WalletCards size={18} />}
               tone="green"
-            />
-            <MetricCard
-              title="Já registrado"
-              value={loading ? '—' : formatMoney(data?.spendingCents ?? 0)}
-              icon={<ReceiptText size={18} />}
-              tone="cream"
             />
             <MetricCard
               title="Disponível"
@@ -501,7 +505,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
             />
           </section>
 
-          <Card className="overflow-hidden border-[#d9e0d4] bg-white shadow-sm">
+          <Card className="overflow-hidden border-[#d9e0d4] bg-white shadow-[0_14px_38px_rgba(30,71,57,.08)] transition-shadow duration-300 hover:shadow-[0_18px_46px_rgba(30,71,57,.12)]">
             <CardHeader className="flex flex-row items-center justify-between border-b border-[#e6ebe2] pb-4">
               <div>
                 <CardTitle className="font-serif text-2xl text-[#143b32]">
@@ -517,7 +521,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
               <div
                 ref={messageListRef}
                 onScroll={handleMessageScroll}
-                className="max-h-[min(430px,55dvh)] min-h-[280px] space-y-3 overflow-y-auto overscroll-contain bg-[#fafcf9] p-5 [overflow-anchor:none]"
+                className="max-h-[min(420px,54dvh)] min-h-[270px] space-y-3 overflow-y-auto overscroll-contain bg-[#fafcf9] p-5 [overflow-anchor:none]"
                 aria-live="polite"
               >
                 {initialLoading && (
@@ -572,19 +576,15 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                     </Button>
                   </div>
                   <p className="text-xs leading-5 text-[#668078]">
-                    Pressione <span className="font-semibold">Enter</span> para enviar e <span className="font-semibold">Shift + Enter</span> para quebrar a linha. Local é opcional: escreva <span className="font-semibold">local: nome do local</span> na mesma mensagem. Se não informar, ele não aparece no relatório.
+                    <span className="font-semibold">Enter</span> envia. Local é opcional: escreva <span className="font-semibold">local: nome</span> na mesma mensagem.
                   </p>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
                     'Ajuda',
                     'Meus dados',
-                    'Atualizar dados',
-                    'Excluir cartão',
-                    'Resetar dados',
-                    'Minha renda é R$ 2.500 e orçamento R$ 700',
-                    'Cartão Nubank, limite R$ 1.500, fecha dia 5 e vence dia 12',
-                    'Posso comprar algo de R$ 300 no crédito?',
+                    'Comprei almoço por R$ 28 no Pix',
+                    'Paguei boleto de R$ 120',
                   ].map((example) => (
                     <button
                       key={example}
@@ -602,7 +602,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
         </section>
 
         <aside className="space-y-5">
-          <Card className="border-[#d9e0d4] bg-white shadow-sm">
+          <Card className="border-[#d9e0d4] bg-white shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
                 <CreditCard size={18} /> Seus cartões
@@ -617,7 +617,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                   Cadastre um cartão pelo chat para analisar compras no crédito.
                 </p>
               )}
-              {data?.cards.map((card) => {
+              {visibleCards.map((card) => {
                 const used = card.outstandingCents ?? 0;
                 const brand = normalizeCardBrand(card.brand);
                 const available =
@@ -628,7 +628,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                 return (
                   <div
                     key={card.id}
-                    className="rounded-2xl border border-[#e1e7df] bg-[#fbfcf9] p-4"
+                    className="animate-in fade-in slide-in-from-top-1 rounded-2xl border border-[#e1e7df] bg-[#fbfcf9] p-4 duration-300"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -676,10 +676,26 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                   </div>
                 );
               })}
+              {(data?.cards.length ?? 0) > 2 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllCards((current) => !current)}
+                  aria-expanded={showAllCards}
+                  className="flex w-full items-center justify-center gap-1 rounded-xl border border-[#d9e0d4] px-3 py-2 text-xs font-semibold text-[#174f40] transition hover:border-[#174f40] hover:bg-[#f3f8f4]"
+                >
+                  {showAllCards
+                    ? 'Mostrar menos cartões'
+                    : `Ver mais ${hiddenCardsCount} ${hiddenCardsCount === 1 ? 'cartão' : 'cartões'}`}
+                  <ChevronDown
+                    size={15}
+                    className={`transition-transform duration-300 ${showAllCards ? 'rotate-180' : ''}`}
+                  />
+                </button>
+              )}
             </CardContent>
           </Card>
 
-          <Card className="border-[#d9e0d4] bg-white shadow-sm">
+          <Card className="border-[#d9e0d4] bg-white shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
             <CardHeader className="flex flex-row items-center justify-between pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
                 <ArrowUpRight size={18} /> Ritmo do mês
@@ -701,7 +717,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
             </CardContent>
           </Card>
 
-          <Card className="border-[#d9e0d4] bg-white shadow-sm">
+          <Card className="border-[#d9e0d4] bg-white shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
                 <ReceiptText size={18} /> Compras recentes
@@ -713,10 +729,10 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                   Ainda não há compras registradas.
                 </p>
               )}
-              {regularPurchases.slice(0, 5).map((purchase) => (
+              {visiblePurchases.map((purchase) => (
                 <div
                   key={purchase.id}
-                  className="flex items-start justify-between gap-3 border-b border-[#eef1ec] pb-3 last:border-0 last:pb-0"
+                  className="animate-in fade-in slide-in-from-top-1 flex items-start justify-between gap-3 border-b border-[#eef1ec] pb-3 duration-300 last:border-0 last:pb-0"
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium leading-5">
@@ -769,10 +785,26 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                   </strong>
                 </div>
               ))}
+              {regularPurchases.length > 2 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllPurchases((current) => !current)}
+                  aria-expanded={showAllPurchases}
+                  className="flex w-full items-center justify-center gap-1 rounded-xl border border-[#d9e0d4] px-3 py-2 text-xs font-semibold text-[#174f40] transition hover:border-[#174f40] hover:bg-[#f3f8f4]"
+                >
+                  {showAllPurchases
+                    ? 'Mostrar menos compras'
+                    : `Ver mais ${regularPurchases.length - 2} compra${regularPurchases.length - 2 === 1 ? '' : 's'}`}
+                  <ChevronDown
+                    size={15}
+                    className={`transition-transform duration-300 ${showAllPurchases ? 'rotate-180' : ''}`}
+                  />
+                </button>
+              )}
             </CardContent>
           </Card>
 
-          <Card className="border-[#d9e0d4] bg-white shadow-sm">
+          <Card className="border-[#d9e0d4] bg-white shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
                 <ReceiptText size={18} /> Boletos pagos
@@ -797,8 +829,8 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
                       <span className="rounded-full bg-lime-50 px-2 py-0.5 font-semibold text-lime-800 ring-1 ring-lime-100">
                         Pagamento: Boleto
                       </span>
-                      <span className="rounded-full bg-lime-50 px-2 py-0.5 font-semibold text-lime-800 ring-1 ring-lime-100">
-                        Categoria: Boletos
+                      <span className={`rounded-full px-2 py-0.5 font-semibold ${categoryToneFor(purchase.category)}`}>
+                        Categoria: {purchaseCategoryLabel(purchase.category, purchase.description)}
                       </span>
                       {purchase.merchant && (
                         <span className="text-[#668078]">

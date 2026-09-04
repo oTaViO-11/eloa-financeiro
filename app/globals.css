@@ -128,7 +128,17 @@ body { font-family: var(--font-dm-sans), Arial, Helvetica, sans-serif; }
   }
   html {
     @apply font-sans;
+    scroll-behavior: smooth;
   }
 }
 
 .font-serif { font-family: var(--font-playfair), Georgia, serif; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
