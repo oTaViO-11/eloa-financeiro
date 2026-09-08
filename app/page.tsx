@@ -11,9 +11,9 @@ export default async function Home() {
     <main className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_top,_#fffdf8_0,_#faf5eb_52%,_#edf3e9_100%)] px-5 text-[#093e29]">
       <section className="w-full max-w-xl rounded-[2rem] border border-[#cadac8] bg-[#fffdf8] p-7 shadow-[0_20px_70px_rgba(9,62,41,.13)] sm:p-10">
         <img
-          src="/eloa-logo-principal.png"
-          alt="Eloá - Sua Assistente Financeira"
-          className="h-40 w-36 rounded-2xl object-contain shadow-[0_14px_32px_rgba(9,62,41,.16)]"
+          src="/eloa-logo-marca.png"
+          alt="Símbolo da Eloá"
+          className="h-28 w-24 object-contain"
         />
         <p className="mt-7 text-xs font-bold uppercase tracking-[0.18em] text-[#61766a]">Eloá · financeiro pessoal</p>
         <h1 className="mt-3 font-serif text-4xl leading-tight tracking-tight">Suas compras, seu limite, suas escolhas.</h1>

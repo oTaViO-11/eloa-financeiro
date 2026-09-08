@@ -441,11 +441,11 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
       <header className="sticky top-0 z-20 border-b border-[#cadac8]/80 bg-[#fffdf8]/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-[#fffaf1] shadow-sm ring-1 ring-[#b8d0b6]">
+            <div className="grid h-10 w-10 place-items-center">
               <img
                 src="/eloa-logo-marca.png"
                 alt="Marca Eloá"
-                className="h-9 w-9 object-contain"
+                className="h-10 w-10 object-contain"
               />
             </div>
             <div>
@@ -478,9 +478,9 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
               </p>
             </div>
             <img
-              src="/eloa-logo-principal.png"
-              alt="Eloá - Sua Assistente Financeira"
-              className="hidden h-32 w-28 shrink-0 rounded-2xl object-contain sm:block"
+              src="/eloa-logo-marca-invertida.png"
+              alt="Símbolo da Eloá"
+              className="hidden h-28 w-24 shrink-0 object-contain sm:block"
             />
           </div>
 
