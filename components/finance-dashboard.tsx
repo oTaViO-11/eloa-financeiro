@@ -437,15 +437,19 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
   const initialLoading = loading && !data;
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#ffffff_0,_#f5f6f1_42%,_#eff3ed_100%)] text-[#143b32]">
-      <header className="sticky top-0 z-20 border-b border-[#d9e0d4]/80 bg-[#fbfcf8]/80 backdrop-blur-xl">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#fffdf8_0,_#faf5eb_42%,_#edf3e9_100%)] text-[#093e29]">
+      <header className="sticky top-0 z-20 border-b border-[#cadac8]/80 bg-[#fffdf8]/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[#174f40] text-white shadow-sm">
-              <WalletCards size={20} />
+            <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-[#fffaf1] shadow-sm ring-1 ring-[#b8d0b6]">
+              <img
+                src="/eloa-logo-marca.png"
+                alt="Marca Eloá"
+                className="h-9 w-9 object-contain"
+              />
             </div>
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#5c756e]">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#61766a]">
                 Eloá
               </p>
               <h1 className="font-serif text-xl leading-none tracking-tight">
@@ -453,7 +457,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
               </h1>
             </div>
           </div>
-          <div className="hidden items-center gap-2 rounded-full border border-[#d9e0d4] bg-white px-3 py-2 text-sm text-[#47645c] sm:flex">
+          <div className="hidden items-center gap-2 rounded-full border border-[#cadac8] bg-[#fffdf8] px-3 py-2 text-sm text-[#476452] sm:flex">
             <LockKeyhole size={14} /> Dados só seus
           </div>
         </div>
@@ -461,16 +465,23 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
 
       <div className="mx-auto grid max-w-7xl gap-5 px-5 py-6 sm:px-8 lg:grid-cols-[minmax(0,1.55fr)_minmax(320px,.85fr)]">
         <section className="space-y-6">
-          <div className="rounded-[2rem] bg-[#174f40] px-6 py-6 text-[#f7faf5] shadow-[0_20px_60px_rgba(20,66,53,.16)] transition-shadow duration-300 hover:shadow-[0_24px_70px_rgba(20,66,53,.22)] sm:px-8">
-            <p className="text-sm text-[#c9ddd3]">
-              Olá, {displayName.split(' ')[0]}.
-            </p>
-            <h2 className="mt-1 max-w-xl font-serif text-3xl leading-tight sm:text-4xl">
-              Suas decisões financeiras, uma conversa de cada vez.
-            </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-[#d7e5de]">
-              Diga o que aconteceu. Eu organizo e você só confirma antes de salvar.
-            </p>
+          <div className="flex items-center justify-between gap-5 overflow-hidden rounded-[2rem] bg-[#093e29] px-6 py-6 text-[#fffaf1] shadow-[0_20px_60px_rgba(9,62,41,.18)] transition-shadow duration-300 hover:shadow-[0_24px_70px_rgba(9,62,41,.24)] sm:px-8">
+            <div>
+              <p className="text-sm text-[#c9dec9]">
+                Olá, {displayName.split(' ')[0]}.
+              </p>
+              <h2 className="mt-1 max-w-xl font-serif text-3xl leading-tight sm:text-4xl">
+                Suas decisões financeiras, uma conversa de cada vez.
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-[#d8e7d6]">
+                Diga o que aconteceu. Eu organizo e você só confirma antes de salvar.
+              </p>
+            </div>
+            <img
+              src="/eloa-logo-principal.png"
+              alt="Eloá - Sua Assistente Financeira"
+              className="hidden h-32 w-28 shrink-0 rounded-2xl object-contain sm:block"
+            />
           </div>
 
           {notice && (
