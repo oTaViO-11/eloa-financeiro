@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { EloaFooter } from '@/components/eloa-footer';
 import { cardBrandLabel, normalizeCardBrand } from '@/lib/card-brand';
 import { purchaseCategoryLabel } from '@/lib/categories';
 
@@ -923,6 +924,7 @@ export function FinanceDashboard({ displayName }: { displayName: string }) {
           </Card>
         </aside>
       </div>
+      <EloaFooter />
     </main>
   );
 }
